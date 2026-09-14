@@ -1,0 +1,86 @@
+{
+    "2511.13780v1": {
+        "id": "2511.13780v1",
+        "title": "Self-Attention as Distributional Projection: A Unified Interpretation of Transformer Architecture"
+    },
+    "1906.04972v1": {
+        "id": "1906.04972v1",
+        "title": "Toward Interpretable Music Tagging with Self-Attention"
+    },
+    "2310.08064v1": {
+        "id": "2310.08064v1",
+        "title": "Age Estimation Based on Graph Convolutional Networks and Multi-head Attention Mechanisms"
+    },
+    "2410.11842v3": {
+        "id": "2410.11842v3",
+        "title": "MoH: Multi-Head Attention as Mixture-of-Head Attention"
+    },
+    "2305.19798v2": {
+        "id": "2305.19798v2",
+        "title": "Primal-Attention: Self-attention through Asymmetric Kernel SVD in Primal Representation"
+    },
+    "2006.00697v3": {
+        "id": "2006.00697v3",
+        "title": "Translating Natural Language Instructions for Behavioral Robot Navigation with a Multi-Head Attention Mechanism"
+    },
+    "2007.13199v2": {
+        "id": "2007.13199v2",
+        "title": "Double Multi-Head Attention for Speaker Verification"
+    },
+    "2107.06493v1": {
+        "id": "2107.06493v1",
+        "title": "Serialized Multi-Layer Multi-Head Attention for Neural Speaker Embedding"
+    },
+    "2210.00939v6": {
+        "id": "2210.00939v6",
+        "title": "Improving Sample Quality of Diffusion Models Using Self-Attention Guidance"
+    },
+    "2308.10917v1": {
+        "id": "2308.10917v1",
+        "title": "PACS: Prediction and analysis of cancer subtypes from multi-omics data based on a multi-head attention mechanism model"
+    },
+    "1702.01806v2": {
+        "id": "1702.01806v2",
+        "title": "Beam Search Strategies for Neural Machine Translation"
+    },
+    "2110.10780v3": {
+        "id": "2110.10780v3",
+        "title": "An Open Natural Language Processing Development Framework for EHR-based Clinical Research: A case demonstration using the National COVID Cohort Collaborative (N3C)"
+    },
+    "2401.14043v3": {
+        "id": "2401.14043v3",
+        "title": "Towards Goal-oriented Prompt Engineering for Large Language Models: A Survey"
+    },
+    "1706.03872v1": {
+        "id": "1706.03872v1",
+        "title": "Six Challenges for Neural Machine Translation"
+    },
+    "2312.04649v1": {
+        "id": "2312.04649v1",
+        "title": "PyThaiNLP: Thai Natural Language Processing in Python"
+    },
+    "1706.09733v1": {
+        "id": "1706.09733v1",
+        "title": "Stronger Baselines for Trustable Results in Neural Machine Translation"
+    },
+    "2307.10652v5": {
+        "id": "2307.10652v5",
+        "title": "Exploring the Landscape of Natural Language Processing Research"
+    },
+    "2310.17644v1": {
+        "id": "2310.17644v1",
+        "title": "torchdistill Meets Hugging Face Libraries for Reproducible, Coding-Free Deep Learning Studies: A Case Study on NLP"
+    },
+    "1806.02525v2": {
+        "id": "1806.02525v2",
+        "title": "Multi-Source Neural Machine Translation with Missing Data"
+    },
+    "2105.04026v2": {
+        "id": "2105.04026v2",
+        "title": "The Modern Mathematics of Deep Learning"
+    },
+    "2410.22997v2": {
+        "id": "2410.22997v2",
+        "title": "A Comparison of Prompt Engineering Techniques for Task Planning and Execution in Service Robotics"
+    }
+}

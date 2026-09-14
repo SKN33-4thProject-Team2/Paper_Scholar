@@ -1,0 +1,15 @@
+# Install in a separate evaluation environment.
+# RAGAS/DeepEval currently resolve older OpenAI/LangChain client versions than
+# the main development environment, so keeping them isolated avoids breaking
+# the chatbot runtime.
+-r ../requirements.txt
+ragas>=0.4,<0.5
+deepeval>=4.2,<5.0
+
+# ragas 0.4.x still imports langchain_community.chat_models.vertexai at
+# module load time. That submodule was removed from langchain-community as
+# part of its ongoing sunset (integrations moved to standalone packages), so
+# an unpinned install resolves the latest langchain-community and ragas
+# fails with ModuleNotFoundError before any evaluation code even runs. Pin to
+# the last release that still ships the module.
+langchain-community==0.3.31

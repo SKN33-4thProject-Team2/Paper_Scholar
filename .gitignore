@@ -1,0 +1,39 @@
+# 파이썬 가상 환경 폴더
+.venv/
+
+# 파이썬 캐시 폴더(임시 폴더)
+__pycache__/
+
+# 주피터 노트북 자동 저장 폴더
+.ipynb_checkpoints/
+
+# Mac os Finder 폴더 보기 설정이 저장된 파일
+.DS_Store
+
+# .py 파일 실행 시 생성되는 컴파일 캐시 파일
+*.pyc
+
+# 파이참 설정
+.idea
+
+# dotenv 무시 설정
+.env
+
+# 로컬 실행 로그 (`Log` 패키지의 Python 코드는 포함)
+Log/*.log
+Log/*.log.*
+
+# 중단된 요약을 재개하기 위한 로컬 청크 체크포인트
+data/temp_summary/
+
+# 중단된 번역을 재개하기 위한 로컬 청크 체크포인트
+data/temp_translation/
+
+# 번역·요약 및 Vector DB 로컬 산출물
+data/translations/
+data/summaries/
+data/vector_db/
+
+# PDF 렌더링 등 로컬 임시 산출물
+tmp/
+

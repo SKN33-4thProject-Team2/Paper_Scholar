@@ -1,0 +1,79 @@
+{
+  "dataset_version": "v3",
+  "question_bank_counts": {
+    "artifacts": 40,
+    "retrieval": 400,
+    "deep_research": 80,
+    "pipeline": 80,
+    "refusal": 50,
+    "rag": 450,
+    "papers": 40,
+    "total": 650
+  },
+  "execution_budget": 400,
+  "evaluated_cases": 400,
+  "suite_counts": {
+    "artifacts": 40,
+    "retrieval": 240,
+    "deep_research": 40,
+    "pipeline": 40,
+    "refusal": 40
+  },
+  "error_cases": 0,
+  "micro_averages": {
+    "citation_precision": 0.0,
+    "deep_research_completion": 1.0,
+    "extraction_content_completeness": 1.0,
+    "extraction_title_accuracy": 1.0,
+    "passage_section_mrr": 0.3979,
+    "passage_section_recall_at_5": 0.4042,
+    "pipeline_completion": 1.0,
+    "reciprocal_rank": 1.0,
+    "refusal_accuracy": 0.7,
+    "required_term_recall": 0.5,
+    "retrieval_recall_at_k": 1.0,
+    "route_sequence_accuracy": 1.0
+  },
+  "macro_averages_by_paper": {
+    "citation_precision": 0.0,
+    "deep_research_completion": 1.0,
+    "extraction_content_completeness": 1.0,
+    "extraction_title_accuracy": 1.0,
+    "passage_section_mrr": 0.3979,
+    "passage_section_recall_at_5": 0.4042,
+    "pipeline_completion": 1.0,
+    "reciprocal_rank": 1.0,
+    "refusal_accuracy": 0.65,
+    "required_term_recall": 0.5,
+    "retrieval_recall_at_k": 1.0,
+    "route_sequence_accuracy": 1.0
+  },
+  "averages_by_suite": {
+    "artifacts": {
+      "extraction_content_completeness": 1.0,
+      "extraction_title_accuracy": 1.0
+    },
+    "deep_research": {
+      "deep_research_completion": 1.0,
+      "required_term_recall": 0.5,
+      "route_sequence_accuracy": 1.0
+    },
+    "pipeline": {
+      "pipeline_completion": 1.0,
+      "route_sequence_accuracy": 1.0
+    },
+    "refusal": {
+      "refusal_accuracy": 1.0,
+      "route_sequence_accuracy": 1.0
+    },
+    "retrieval": {
+      "citation_precision": 0.0,
+      "passage_section_mrr": 0.3979,
+      "passage_section_recall_at_5": 0.4042,
+      "reciprocal_rank": 1.0,
+      "refusal_accuracy": 0.65,
+      "retrieval_recall_at_k": 1.0,
+      "route_sequence_accuracy": 1.0
+    }
+  }
+}

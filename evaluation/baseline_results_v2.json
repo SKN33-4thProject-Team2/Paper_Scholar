@@ -1,0 +1,59 @@
+{
+  "dataset_version": "v2",
+  "evaluated_at": "2026-09-01",
+  "dataset_counts": {
+    "papers": 10,
+    "artifacts": 10,
+    "rag": 23,
+    "deep_research": 5,
+    "pipeline": 8,
+    "total": 46
+  },
+  "artifact_baseline": {
+    "case_count": 10,
+    "case_errors": 0,
+    "metrics": {
+      "summary_title_preservation": {
+        "score": 1.0,
+        "applicable_cases": 10
+      },
+      "summary_acronym_recall": {
+        "score": 1.0,
+        "applicable_cases": 10
+      },
+      "summary_numeric_recall": {
+        "score": 1.0,
+        "applicable_cases": 10
+      },
+      "translation_term_recall": {
+        "score": 0.9667,
+        "applicable_cases": 10
+      },
+      "translation_latex_preservation": {
+        "score": 1.0,
+        "applicable_cases": 1,
+        "caution": "원문 DB에서 LaTeX로 인식된 사례가 1편뿐이므로 확대 검증이 필요함"
+      },
+      "translation_table_structure_preservation": {
+        "score": 0.375,
+        "applicable_cases": 4,
+        "caution": "표가 있는 평가 가능 논문 4편 중 구조 불일치가 확인됨"
+      }
+    }
+  },
+  "deep_research_baseline": {
+    "case_count": 5,
+    "metrics": {
+      "route_sequence_accuracy": 0.0,
+      "deep_research_completion": 0.0,
+      "required_term_recall": 0.0
+    },
+    "blocker": "orchestration adapter가 feature.deep_research.DeepResearchAgent를 가져오지만 현재 모듈에 해당 클래스가 없어 5건 모두 실패함"
+  },
+  "not_executed": {
+    "translation_llm_quality": "OPENAI_API_KEY 또는 실행 가능한 로컬 judge 모델이 없어 미실행",
+    "rag_and_citation_grounding": "로컬 Vector DB와 judge 자격 증명이 없어 미실행",
+    "live_pipeline": "검색·번역·요약 산출물을 변경할 수 있어 명시적인 live 실행 전까지 미실행",
+    "langsmith_upload": "LANGSMITH_API_KEY가 비어 있어 미실행"
+  }
+}

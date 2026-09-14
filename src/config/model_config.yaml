@@ -1,0 +1,79 @@
+# 공통 제공자 연결 정보와 모듈별 모델 설정
+providers:
+  ollama:
+    host: http://localhost:11434
+    connection_timeout: 3
+
+  # services/nvidia_service.py, feature/paper_extractor.py
+  # API 키는 이 파일이 아니라 .env 의 NVIDIA_API_KEY 로 관리한다.
+  #
+  # 논문 페이지를 이미지로 넣어 마크다운·LaTeX 로 받아내는 데 쓴다.
+  # nemotron-3-nano-omni 는 총 30B 이지만 활성 파라미터가 3B 인 MoE 라,
+  # 같은 페이지를 llama-3.2-11b-vision(64초) 보다 8배 빠른 8초에 처리하면서
+  # 분수(\frac)·근호(\sqrt)·지시함수(\mathbb{1})까지 복원한다.
+  nvidia:
+    base_url: https://integrate.api.nvidia.com/v1
+    vision_model: nvidia/nemotron-3-nano-omni-30b-a3b-reasoning
+
+    # 페이지를 이미지로 만들 때의 해상도. 150 이면 한 쪽이 약 110KB, 프롬프트 2천 토큰이다.
+    render_dpi: 150
+
+    # nemotron 계열은 추론 모델이라 기본값으로 사고 과정을 따로 생성한다.
+    # 페이지를 옮겨 적는 데는 필요 없고, 켜두면 사고 토큰이 2만 자를 넘기며
+    # 같은 쪽이 14초에서 82초로 느려진다.
+    disable_thinking: true
+
+# tools/keyword_tool.py
+keyword:
+  provider: ollama
+  model: qwen2.5:3b
+  temperature: 0.2
+  max_tokens: 160
+  timeout: 25
+
+# services/translation_service.py, tools/translation_tool.py
+# 번역은 NVIDIA Build API 로 보낸다. 같은 4,000자 조각을 로컬 CPU(translategemma:4b)
+# 는 331.9초, 이쪽은 21.8초에 옮겼다(15배). 번역은 입력만큼 긴 출력을 만들어야 해서
+# GPU 없는 장비에서는 논문 한 편에 20~50분이 걸린다.
+# provider 를 ollama 로 되돌리고 model 을 translategemma:4b 로 바꾸면 예전대로 돈다.
+translation:
+  provider: ollama
+  model: qwen2.5:3b
+  stream: true
+  temperature: 0.2
+  max_tokens: 4096
+  timeout: 600
+  chunk_chars: 7000
+  max_retries: 2
+  retry_backoff_seconds: 2.0
+  output_directory: data/paper_translate
+
+# tools/summary_tool.py, services/summary_markdown_store.py
+# 같은 조각으로 잰 값이다(청크 요약 + 최종 요약, 4단 항목 채움 / 수치 보존).
+#   qwen2.5:3b     96.8초  4/4  4/4   ← 이것
+#   qwen2.5:1.5b   52.5초  4/4  2/4   중국어로 답한다
+#   gemma3:1b      15.9초  실패       key_points 가 'MoH' 한 단어, 최종 3항목이 빔
+# 더 작은 모델은 스키마 덕에 키는 채우지만 값이 비어 _parse_response 에서 걸린다.
+# 키워드 도구가 이미 쓰는 모델이라 따로 받을 것도 없다.
+summary:
+  provider: ollama
+  model: qwen2.5:3b
+  temperature: 0.0
+  max_tokens: 1536
+  timeout: 300
+  chunk_chars: 3500
+  chunk_max_tokens: 2048
+  max_retries: 2
+  retry_backoff_seconds: 2.0
+  output_directory: data/summaries
+
+# services/summary_vector_store.py
+summary_store:
+  embedding:
+    model: BAAI/bge-m3
+    device: cpu
+    normalize_embeddings: true
+  vector_db:
+    provider: chroma
+    persist_directory: data/vector_db
+    summary_collection: paper_summaries
