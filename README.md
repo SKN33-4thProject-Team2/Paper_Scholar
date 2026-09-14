@@ -106,7 +106,7 @@ RAG가 찾은 논문을 넘겨받아 Deep Research로 심층 분석
 AcademicPaper_RAG_Chatbot/
 ├── .env.sample                     # 환경변수 예시 파일
 ├── .gitignore
-├── figures/                         # README용 시스템 흐름도 및 Streamlit 화면 이미지
+├── image/                            # README용 시스템 흐름도 및 Streamlit 화면 이미지
 ├── main.py                         # Supervisor 기반 LangGraph 챗봇의 CLI 진입점
 ├── web_app.py                      # Streamlit 웹 애플리케이션 진입점
 ├── requirements.txt                # 기본 Python 의존성 (평가 전용은 evaluation/requirements.txt)
@@ -226,11 +226,11 @@ Supervisor 노드가 매 턴 사용자 요청을 해석해 다음에 실행할 �
 
 ### 전체 처리 흐름
 
-![Academic Paper RAG Chatbot 전체 처리 흐름](figures/img_2.png)
+![Academic Paper RAG Chatbot 전체 처리 흐름](image/img_2.png)
 
 ### LangGraph 세부 흐름
 
-![Supervisor 기반 LangGraph 세부 흐름](figures/img.png)
+![Supervisor 기반 LangGraph 세부 흐름](image/img.png)
 
 ### 핵심 분기 규칙
 
@@ -247,19 +247,19 @@ Supervisor 노드가 매 턴 사용자 요청을 해석해 다음에 실행할 �
 
 ### 저장된 논문 목록 · 초록 한국어 번역
 
-![저장된 논문 목록과 초록 한국어 번역 화면](figures/img_3.png)
+![저장된 논문 목록과 초록 한국어 번역 화면](image/img_3.png)
 
 ### arXiv 논문 검색 및 요약
 
-![arXiv 논문 검색과 요약 화면](figures/img_5.png)
+![arXiv 논문 검색과 요약 화면](image/img_5.png)
 
 ### 저장된 논문 상세 보기(Deep Research)
 
-![선택 논문 Deep Research 화면](figures/img_6.png)
+![선택 논문 Deep Research 화면](image/img_6.png)
 
 ### 논문 번역·요약 결과
 
-![논문 번역과 구조화 요약 결과 화면](figures/img_4.png)
+![논문 번역과 구조화 요약 결과 화면](image/img_4.png)
 
 ## 실행 방법
 
