@@ -62,6 +62,52 @@ class SupervisorChatbot:
         )
         return str(result.get("response") or "응답을 생성하지 못했습니다.")
 
+    async def ainvoke(
+        self,
+        query: str,
+        *,
+        thread_id: str | None = None,
+        paper_ids: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Run the same Supervisor graph through LangGraph's async interface.
+
+        This keeps the tool contracts unchanged. Callers that can await should
+        use this method so the graph does not block their event loop while
+        waiting for model or API work.
+        """
+
+        run_thread_id = thread_id or f"chat-{uuid4().hex[:8]}"
+        config = {
+            "configurable": {"thread_id": run_thread_id},
+            "run_name": "academic-paper-supervisor-chatbot-async",
+            "tags": ["academic-paper", "langgraph", "supervisor-chatbot", "async"],
+        }
+        result = await self.graph.ainvoke(
+            initial_state(
+                query,
+                thread_id=run_thread_id,
+                paper_ids=paper_ids,
+            ),
+            config=config,
+        )
+        return dict(result)
+
+    async def achat(
+        self,
+        query: str,
+        *,
+        thread_id: str | None = None,
+        paper_ids: list[str] | None = None,
+    ) -> str:
+        """Return only the basic response for async callers."""
+
+        result = await self.ainvoke(
+            query,
+            thread_id=thread_id,
+            paper_ids=paper_ids,
+        )
+        return str(result.get("response") or "응답을 생성하지 못했습니다.")
+
 
 def run_supervisor_chatbot(
     query: str,
