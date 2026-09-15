@@ -38,6 +38,7 @@ Route = Literal[
     "summarize",
     "deep_search",
     "deep_research",
+    "human",
     "finish",
 ]
 
@@ -81,6 +82,8 @@ class WorkflowState(TypedDict, total=False):
     deep_research_answer: str
     deep_research_sources: list[Any]
     deep_research_paper_id: str
+    human_input_required: bool
+    human_question: str
     response: str
 
     node_history: Annotated[list[str], _accumulate]
@@ -123,4 +126,6 @@ def initial_state(
         "deep_research_status": "",
         "deep_research_answer": "",
         "deep_research_sources": [],
+        "human_input_required": False,
+        "human_question": "",
     }

@@ -22,6 +22,7 @@ ExecutableRoute = Literal[
     "summarize",
     "deep_search",
     "deep_research",
+    "human",
 ]
 
 
@@ -34,6 +35,7 @@ class SupervisorDecision(BaseModel):
     selected_paper_ids: list[str] = Field(default_factory=list)
     download_paper_ids: list[str] = Field(default_factory=list)
     deep_search_paper_id: str = ""
+    human_question: str = ""
 
 
 SUPERVISOR_PROMPT = """You plan work for an academic-paper assistant.
@@ -49,6 +51,7 @@ Nodes:
 - summarize: summarize translated Markdown and store it in ChromaDB
 - deep_search: retrieve relevant passages from exactly one paper saved by PaperExtractor
 - deep_research: answer using only passages returned by deep_search
+- human: ask the user a concise clarifying question; do not run a tool
 
 Rules:
 1. For a new external search use [keyword, search].
@@ -69,7 +72,41 @@ Rules:
 9. Treat conversational questions about which papers the assistant can explain
    as requests to list papers from data/paper_extract via deep_search. Never
    start external search or download for those local inventory questions.
+10. If the request is ambiguous, lacks a needed research topic or paper target,
+    or you cannot select a safe plan, use [human]. Put one concise Korean
+    question in human_question. Never guess or run a tool in that case.
 """
+
+
+_GENERIC_REQUESTS = {
+    "이거",
+    "그거",
+    "해줘",
+    "도와줘",
+    "번역",
+    "번역해줘",
+    "논문 번역",
+    "논문 번역해줘",
+    "요약",
+    "요약해줘",
+    "논문 요약",
+    "논문 요약해줘",
+    "검색",
+    "검색해줘",
+    "논문 검색",
+    "논문 검색해줘",
+    "찾아줘",
+    "다운로드",
+    "다운로드해줘",
+}
+
+
+def _human_decision(reason: str, question: str) -> SupervisorDecision:
+    return SupervisorDecision(
+        steps=["human"],
+        reason=reason,
+        human_question=question,
+    )
 
 
 class SupervisorRouter:
@@ -93,6 +130,7 @@ class SupervisorRouter:
     @staticmethod
     def _rule_decision(state: WorkflowState) -> SupervisorDecision | None:
         query = state["query"].casefold()
+        normalized_query = re.sub(r"\s+", " ", query).strip()
         has_extraction = bool(state.get("extracted_records"))
         has_translation = bool(state.get("translated_paths"))
         has_candidates = bool(
@@ -100,6 +138,41 @@ class SupervisorRouter:
             or state.get("search_results")
             or state.get("library_results")
         )
+
+        # Tool name만 말하거나 대명사만 남긴 요청은 대상·주제를 추측하면
+        # 안 된다. 기존 기능을 실행하지 않고 Human-in-the-Loop으로 보낸다.
+        requires_topic = normalized_query in {
+            "검색",
+            "검색해줘",
+            "논문 검색",
+            "논문 검색해줘",
+            "찾아줘",
+        }
+        lacks_action_or_target = normalized_query in {
+            "이거",
+            "그거",
+            "해줘",
+            "도와줘",
+        } or (
+            normalized_query in _GENERIC_REQUESTS
+            and not state.get("paper_ids")
+        )
+        if requires_topic or lacks_action_or_target:
+            return _human_decision(
+                "요청에 필요한 주제 또는 대상 논문이 없음",
+                "원하는 작업과 대상 논문 또는 주제를 문장으로 알려주세요. "
+                "예: 'RAG 논문 5편 검색해줘', 'paper-1을 번역해줘'.",
+            )
+
+        unresolved_pronoun = any(
+            phrase in normalized_query
+            for phrase in ("이 논문", "그 논문", "해당 논문", "이거", "그거")
+        )
+        if unresolved_pronoun and not state.get("paper_ids"):
+            return _human_decision(
+                "지시 대상 논문이 선택되지 않음",
+                "어떤 논문을 처리할지 제목, paper_id 또는 목록 번호로 알려주세요.",
+            )
 
         # "설명 가능한 논문이 뭐가 있어?"는 새 논문 검색 요청이 아니라
         # PaperExtractor가 저장한 로컬 논문 목록 요청으로 처리한다.
@@ -318,8 +391,13 @@ class SupervisorRouter:
     @classmethod
     def _fallback(cls, state: WorkflowState) -> SupervisorDecision:
         return cls._rule_decision(state) or SupervisorDecision(
-            steps=["deep_search"],
-            reason="추출 논문 검색 후 질의응답",
+            steps=["human"],
+            reason="요청 의도 또는 대상 논문을 확정할 수 없음",
+            human_question=(
+                "요청을 정확히 처리하려면 원하는 작업과 대상 논문 또는 주제를 "
+                "문장으로 알려주세요. 예: 'RAG 논문 5편 검색해줘', "
+                "'paper-1을 번역해줘', '1번 논문을 설명해줘'."
+            ),
         )
 
     def decide(self, state: WorkflowState) -> SupervisorDecision:
