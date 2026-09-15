@@ -225,6 +225,27 @@ class ChromaFullTextStore:
             for paper_id, sections in grouped.items()
         ]
 
+    def has_paper(self, paper_id: str) -> bool:
+        """이 저장소가 색인할 본문 절이 해당 논문에 하나라도 있는지 확인한다.
+
+        검색 결과가 비었을 때 "관련 근거 없음"과 "본문 섹션 없음"을 구분하는 데 쓴다.
+        _read_papers 는 전체 논문의 표·수식을 복원해서 무겁기 때문에 개수만 센다.
+        """
+        if not self.db_path.exists():
+            return False
+        try:
+            with sqlite3.connect(f"file:{self.db_path.as_posix()}?mode=ro", uri=True) as conn:
+                row = conn.execute(
+                    "SELECT COUNT(*) FROM paper_sections "
+                    "WHERE paper_id = ? "
+                    "AND LOWER(TRIM(COALESCE(section_title, ''))) NOT IN ('references', 'bibliography') "
+                    "AND (TRIM(COALESCE(section_text, '')) <> '' OR TRIM(COALESCE(section_html, '')) <> '')",
+                    (paper_id,),
+                ).fetchone()
+        except sqlite3.Error:
+            return False
+        return bool(row and row[0])
+
     def ensure_index(self) -> int:
         collection = self._collection()
         added = 0

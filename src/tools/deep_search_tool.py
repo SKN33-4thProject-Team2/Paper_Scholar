@@ -12,7 +12,7 @@ from typing import Any
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
-from tools import PROJECT_DIR
+from tools import LIBRARY_DB, PROJECT_DIR
 
 
 BASE_DIR = PROJECT_DIR / "data" / "paper_extract"
@@ -20,6 +20,11 @@ JSON_LIST_PATH = BASE_DIR / "extracted_papers.json"
 DB_PATH = BASE_DIR / "extracted_papers.db"
 REF_DB_PATH = BASE_DIR / "extracted_papers_ref.db"
 PAPER_CANDIDATE_LIMIT = 5
+# 참고문헌 절과 내용이 빈 절은 본문이 아니므로 목록·상세 어디에서도 세지 않는다.
+BODY_SECTION_FILTER = (
+    "LOWER(TRIM(COALESCE(section_title, ''))) NOT IN ('references', 'bibliography') "
+    "AND (TRIM(COALESCE(section_text, '')) <> '' OR TRIM(COALESCE(section_html, '')) <> '')"
+)
 
 
 class DeepSearchError(RuntimeError):
@@ -56,20 +61,25 @@ class DeepSearch:
     파일·DB 경로와 외부 의존성을 생성자에서 주입할 수 있으므로 LangGraph
     노드와 통합 테스트에서 같은 검색 계약을 재사용할 수 있다. 무거운 임베딩과
     Chroma 객체는 실제 검색 시점까지 생성하지 않는다.
+
+    본문 표준은 paper_sections 이다. 논문 목록도 기본으로 추출 DB에서 만들고,
+    json_list_path 를 넘긴 경우(평가 코퍼스 등)에만 예전 JSON 카탈로그를 읽는다.
     """
 
     def __init__(
         self,
         *,
-        json_list_path: str | Path = JSON_LIST_PATH,
+        json_list_path: str | Path | None = None,
         db_path: str | Path = DB_PATH,
         reference_db_path: str | Path = REF_DB_PATH,
+        library_db_path: str | Path = LIBRARY_DB,
         embeddings_factory: Callable[[], Any] | None = None,
         fulltext_store_factory: Callable[[], Any] | None = None,
     ) -> None:
-        self.json_list_path = Path(json_list_path)
+        self.json_list_path = Path(json_list_path) if json_list_path else None
         self.db_path = Path(db_path)
         self.reference_db_path = Path(reference_db_path)
+        self.library_db_path = Path(library_db_path)
         self._embeddings_factory = embeddings_factory
         self._fulltext_store_factory = fulltext_store_factory
 
@@ -101,13 +111,12 @@ class DeepSearch:
         self._vector_store_mtime_ns = None
 
     def _load_paper_catalog(self) -> dict[str, Any]:
-        """파일이 변경된 경우에만 논문 카탈로그를 다시 읽는다."""
+        """카탈로그 원본(추출 DB 또는 JSON)이 변경된 경우에만 다시 읽는다."""
+        source = self.json_list_path or self.db_path
         try:
-            mtime_ns = self.json_list_path.stat().st_mtime_ns
+            mtime_ns = source.stat().st_mtime_ns
         except FileNotFoundError as exc:
-            raise DeepSearchError(
-                f"논문 리스트 파일 누락: {self.json_list_path}"
-            ) from exc
+            raise DeepSearchError(f"논문 리스트 원본 누락: {source}") from exc
 
         with self._cache_lock:
             if (
@@ -116,23 +125,93 @@ class DeepSearch:
             ):
                 return self._paper_list_cache
 
-            try:
-                with self.json_list_path.open("r", encoding="utf-8-sig") as file:
-                    payload = json.load(file)
-            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
-                raise DeepSearchError(
-                    f"논문 리스트 파일을 읽지 못했습니다: {self.json_list_path}"
-                ) from exc
-            if not isinstance(payload, dict):
-                raise DeepSearchError(
-                    "논문 리스트 JSON의 최상위 값은 객체여야 합니다."
-                )
+            payload = (
+                self._read_json_catalog()
+                if self.json_list_path
+                else self._read_db_catalog()
+            )
 
             if self._paper_list_mtime_ns != mtime_ns:
                 self._invalidate_vector_store()
             self._paper_list_cache = payload
             self._paper_list_mtime_ns = mtime_ns
             return payload
+
+    def _read_json_catalog(self) -> dict[str, Any]:
+        try:
+            with self.json_list_path.open("r", encoding="utf-8-sig") as file:
+                payload = json.load(file)
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+            raise DeepSearchError(
+                f"논문 리스트 파일을 읽지 못했습니다: {self.json_list_path}"
+            ) from exc
+        if not isinstance(payload, dict):
+            raise DeepSearchError(
+                "논문 리스트 JSON의 최상위 값은 객체여야 합니다."
+            )
+        return payload
+
+    def _read_db_catalog(self) -> dict[str, Any]:
+        """추출 DB에서 논문 목록을 만든다.
+
+        extracted 에만 있고 paper_sections 에는 없는 논문도 목록에 올린다.
+        그래야 선택했을 때 "근거 0건" 대신 "본문 섹션 없음"을 분명히 알려 줄 수 있다.
+        순서는 예전 JSON 과 같은 extracted 최신순이고, paper_sections 에만
+        있는 논문은 그 뒤에 붙인다. "1번 논문" 같은 번호 선택이 바뀌지 않게 하기 위함이다.
+        """
+        try:
+            with self._connect_readonly(self.db_path) as connection:
+                tables = self._table_names(connection)
+                extracted_rows = (
+                    connection.execute(
+                        "SELECT id, title FROM extracted ORDER BY created_at DESC"
+                    ).fetchall()
+                    if "extracted" in tables
+                    else []
+                )
+                section_rows = (
+                    connection.execute(
+                        "SELECT paper_id, COUNT(*) FROM paper_sections "
+                        f"WHERE {BODY_SECTION_FILTER} "
+                        "GROUP BY paper_id ORDER BY MAX(id) DESC"
+                    ).fetchall()
+                    if "paper_sections" in tables
+                    else []
+                )
+        except sqlite3.Error as exc:
+            raise DeepSearchError(f"논문 리스트 DB 조회 오류: {exc}") from exc
+
+        section_counts = {str(paper_id): int(count) for paper_id, count in section_rows}
+        library_titles = self._library_titles()
+        catalog: dict[str, Any] = {}
+        for paper_id, title in [
+            *extracted_rows,
+            *((paper_id, "") for paper_id, _ in section_rows),
+        ]:
+            paper_id = str(paper_id)
+            if paper_id in catalog:
+                continue
+            catalog[paper_id] = {
+                "id": paper_id,
+                "title": str(title or library_titles.get(paper_id) or paper_id),
+                "section_count": section_counts.get(paper_id, 0),
+            }
+        return catalog
+
+    def _library_titles(self) -> dict[str, str]:
+        """paper_sections 에는 제목이 없어 서재 DB 제목으로 채운다."""
+        if not self.library_db_path.is_file():
+            return {}
+        try:
+            with self._connect_readonly(self.library_db_path) as connection:
+                return {
+                    str(paper_id): str(title or "")
+                    for paper_id, title in connection.execute(
+                        "SELECT id, title FROM papers"
+                    )
+                }
+        except sqlite3.Error:
+            return {}
 
     def _create_embeddings(self) -> Any:
         if self._embeddings_factory is not None:
@@ -179,7 +258,8 @@ class DeepSearch:
                 if self._fulltext_store_factory is None:
                     from services.fulltext_vector_store import ChromaFullTextStore
 
-                    self._fulltext_store = ChromaFullTextStore()
+                    # 목록·상세와 본문 근거가 같은 추출 DB를 보도록 경로를 넘긴다.
+                    self._fulltext_store = ChromaFullTextStore(db_path=self.db_path)
                 else:
                     self._fulltext_store = self._fulltext_store_factory()
             return self._fulltext_store
@@ -187,6 +267,15 @@ class DeepSearch:
     @staticmethod
     def _connect_readonly(path: Path) -> sqlite3.Connection:
         return sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+
+    @staticmethod
+    def _table_names(connection: sqlite3.Connection) -> set[str]:
+        return {
+            str(row[0])
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table'"
+            )
+        }
 
     def search_papers(self, keyword: str = "") -> dict[str, Any]:
         """전체 논문 목록 또는 제목 벡터 검색 결과를 반환한다."""
@@ -218,7 +307,11 @@ class DeepSearch:
         }
 
     def get_paper_details(self, paper_id: str) -> dict[str, Any]:
-        """논문 ID로 초록, 본문, 참고문헌을 조회한다."""
+        """논문 ID로 초록, 본문, 참고문헌을 조회한다.
+
+        본문은 paper_sections 의 절을 순서대로 이어 만든다. 절이 없는 논문은
+        전환 기간 동안 extracted 의 abstract·content 로 대신한다.
+        """
         normalized_paper_id = paper_id.strip()
         if not normalized_paper_id:
             raise DeepSearchError("논문 ID를 입력해 주세요.")
@@ -227,20 +320,53 @@ class DeepSearch:
 
         try:
             with self._connect_readonly(self.db_path) as connection:
-                row = connection.execute(
-                    "SELECT title, abstract, content FROM extracted WHERE id = ?",
-                    (normalized_paper_id,),
-                ).fetchone()
+                tables = self._table_names(connection)
+                sections = (
+                    connection.execute(
+                        "SELECT section_title, section_text FROM paper_sections "
+                        f"WHERE paper_id = ? AND {BODY_SECTION_FILTER} "
+                        "ORDER BY section_order",
+                        (normalized_paper_id,),
+                    ).fetchall()
+                    if "paper_sections" in tables
+                    else []
+                )
+                row = (
+                    connection.execute(
+                        "SELECT title, abstract, content FROM extracted WHERE id = ?",
+                        (normalized_paper_id,),
+                    ).fetchone()
+                    if "extracted" in tables
+                    else None
+                )
         except sqlite3.Error as exc:
             raise DeepSearchError(f"DB 조회 오류: {exc}") from exc
-        if row is None:
+        if not sections and row is None:
             raise DeepSearchError(f"ID '{normalized_paper_id}' 논문 없음.")
+
+        title, abstract, content = row if row is not None else ("", "", "")
+        if sections:
+            content = "\n\n".join(
+                f"## {str(section_title or '').strip()}\n\n{str(section_text or '').strip()}"
+                for section_title, section_text in sections
+            )
+            abstract = next(
+                (
+                    str(section_text or "")
+                    for section_title, section_text in sections
+                    if "abstract" in str(section_title or "").casefold()
+                ),
+                abstract,
+            )
 
         details: dict[str, Any] = {
             "paper_id": normalized_paper_id,
-            "title": row[0],
-            "abstract": row[1],
-            "content": row[2],
+            "title": title
+            or self._library_titles().get(normalized_paper_id)
+            or normalized_paper_id,
+            "abstract": abstract,
+            "content": content,
+            "section_count": len(sections),
         }
         if not self.reference_db_path.is_file():
             details["references"] = ["레퍼런스 DB 누락됨"]
@@ -275,11 +401,20 @@ class DeepSearch:
         normalized_paper_id = paper_id.strip()
         if not normalized_paper_id:
             raise DeepSearchError("심층 검색할 논문 ID를 입력해 주세요.")
-        results = self._get_fulltext_store().search(
+        store = self._get_fulltext_store()
+        results = store.search(
             normalized_question,
             paper_id=normalized_paper_id,
             limit=limit,
         )
+        # 결과가 비었을 때 "관련 근거가 없다"와 "색인할 본문 자체가 없다"를 구분한다.
+        # 저장소가 has_paper 를 제공할 때만 확인하므로 평가용 저장소 등은 예전과 같다.
+        has_paper = getattr(store, "has_paper", None)
+        if not results and callable(has_paper) and not has_paper(normalized_paper_id):
+            raise DeepSearchError(
+                f"'{normalized_paper_id}' 논문의 본문 섹션(paper_sections)이 없어 "
+                "근거를 검색할 수 없습니다. 추출 결과가 paper_sections에 저장됐는지 확인해 주세요."
+            )
         return {"question": normalized_question, "results": results}
 
 
