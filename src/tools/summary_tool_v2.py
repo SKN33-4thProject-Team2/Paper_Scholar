@@ -19,7 +19,6 @@ from typing import Callable
 from dotenv import load_dotenv
 
 from tools import EXTRACTED_DB, SUMMARY_DB
-from services.summary_vector_store import ChromaSummaryStore
 from services.model_config_service import load_task_config
 
 DEFAULT_SOURCE_DB = EXTRACTED_DB
@@ -79,6 +78,9 @@ def generate_with_gemini(prompt: str, *, model: str, max_tokens: int,
 
 SUMMARY_PROMPT = """당신은 학술 논문 문단을 요약하는 분석가입니다.
 입력 문단에 있는 정보만 사용하고, 수치·모델명·데이터셋명·인용 번호는 보존하세요.
+실험 결과를 요약할 때는 반드시 모델명, 과제/데이터셋, 실험 조건, 평가 지표와 수치를 함께 보존하세요.
+방법을 요약할 때는 실제로 사용한 모델·데이터·절차를 관련 연구의 소개와 구분하세요.
+저자가 명시한 한계와 결론은 보존하되, 원문에 없는 한계나 해석은 추가하지 마세요.
 표와 수식 placeholder는 삭제하거나 이름을 바꾸지 말고 해당 위치에 그대로 두세요.
 표/수식이 무엇을 나타내거나 어떤 결론을 뒷받침하는지 설명하는 문장이 있으면 반드시 요약에 포함하세요.
 표와 수식의 의미는 원문에 명시된 설명과 직접 확인 가능한 정보만 요약하세요.
@@ -90,10 +92,15 @@ SUMMARY_PROMPT = """당신은 학술 논문 문단을 요약하는 분석가입�
 PAPER_PROMPT = """당신은 학술 논문 전체를 통합 요약하는 분석가입니다.
 입력된 청크 요약만 사용하여 섹션의 핵심 주장, 방법, 결과를 중복 없이 통합하세요.
 입력된 원문과 동일한 언어로 요약하세요. 원문에 없는 내용은 추측하지 마세요.
+각 결과 수치를 해당 모델명, 과제/데이터셋, 실험 조건, 평가 지표와 함께 유지하세요.
+관련 연구에서 소개한 모델이나 방법을 본 논문의 실험 결과로 바꾸어 쓰지 마세요.
 표와 수식은 placeholder를 삭제·변경하지 말고 유지하세요.
 표와 수식의 의미는 원문에 명시된 설명과 직접 확인 가능한 정보만 요약하세요.
 원문에 없는 수치 비교, 원인, 해석은 추론하거나 추가하지 마세요.
 연구 목적, 핵심 방법, 주요 결과, 한계와 결론이 드러나도록 작성하세요.
+Markdown의 연구 목적, 연구 방법, 주요 결과, 한계 및 결론 항목으로 작성하세요.
+한계는 원문에서 확인되는 경우에만 쓰고, 확인되지 않으면 명시되지 않았다고 표시하세요.
+References, Bibliography, 참고문헌 항목은 만들지 마세요.
 """
 
 MARKUP_REPAIR_PROMPT = """앞서 작성한 요약에서 표·수식 placeholder가 누락되거나 변경되었습니다.
@@ -115,6 +122,11 @@ _WORD = re.compile(r"[A-Za-z가-힣][A-Za-z가-힣0-9_-]{1,}")
 _IMPORTANT = re.compile(r"\b\d+(?:\.\d+)?\s*%?|\b(?:significant|outperform|improv|achiev|result|propos|conclu|however|limitation|accuracy|precision|recall|f1|loss|dataset)\w*\b", re.I)
 _ARTIFACT_REF = re.compile(
     r"__SUMMARY_(?:TABLE|FORMULA)_\d{6}__|\b(?:table|tab\.?|equation|eq\.?)\s*\d*\b|표\s*\d*|수식\s*\d*",
+    re.I,
+)
+_EXCLUDED_SECTION = re.compile(
+    r"^\s*(?:(?:\d+(?:\.\d+)*|[IVX]+)[\s.)-]+)?"
+    r"(?:abstract|초록|요약|references|bibliography|참고문헌)\b",
     re.I,
 )
 
@@ -253,18 +265,6 @@ class SummaryResult:
     model: str
 
 
-def save_summary_to_chroma(vector_store: ChromaSummaryStore,
-                           result: SummaryResult) -> int:
-    """요약 결과를 ChromaDB에 저장하고 저장 문서 수를 반환한다."""
-    return vector_store.save(
-        paper_id=result.paper_id,
-        title=result.title,
-        source="summary.db",
-        summary_model=result.model,
-        sections={"summary": result.summary_markdown},
-    )
-
-
 class SummaryTool:
     """본문 DB에서 읽고, 요약 DB에 저장하며, 저장 결과를 다시 렌더링한다."""
 
@@ -272,9 +272,7 @@ class SummaryTool:
                  summary_db: str | Path = DEFAULT_SUMMARY_DB,
                  generator: Callable[..., str] | None = None, *, model: str | None = None,
                  max_chars: int | None = None, provider: str | None = None,
-                 single_call: bool = False,
-                 vector_store: ChromaSummaryStore | None = None,
-                 save_vector: bool = True) -> None:
+                 single_call: bool = False) -> None:
         self.source_db = Path(source_db)
         self.summary_db = Path(summary_db)
         self.provider = (provider or DEFAULT_PROVIDER).strip().casefold()
@@ -282,8 +280,6 @@ class SummaryTool:
             DEFAULT_MODEL if self.provider == DEFAULT_PROVIDER else "qwen2.5:3b"
         )
         self.single_call = single_call
-        self.vector_store = vector_store or ChromaSummaryStore()
-        self.save_vector = save_vector
         self.generation_calls = 0
         self.max_chars = max_chars or DEFAULT_CHUNK_CHARS
         if self.max_chars < 1:
@@ -330,7 +326,7 @@ class SummaryTool:
             ordered_sections = []
             for section_title, section_text in sections:
                 title = str(section_title or "").strip()
-                if re.search(r"^(?:references|bibliography|참고문헌)\b", title, re.I):
+                if _EXCLUDED_SECTION.search(title):
                     continue
                 text = str(section_text or "").strip()
                 if text:
@@ -358,14 +354,23 @@ class SummaryTool:
                 ).fetchall()
             except sqlite3.OperationalError:
                 rows = []
-            if paper is None and rows:
-                paper = (rows[0][1] or paper_id,)
+            if paper is None:
+                # paper_sections만 있는 DB에서는 별도 논문 목록에서 실제 제목을 찾는다.
+                metadata_path = self.source_db.parent.parent / "paper_list" / "saved_papers.json"
+                metadata_title = ""
+                try:
+                    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+                    entry = metadata.get(paper_id, {})
+                    metadata_title = str(entry.get("title", "")).strip()
+                except (OSError, json.JSONDecodeError, AttributeError):
+                    pass
+                paper = (metadata_title or paper_id,)
             if paper is None:
                 raise KeyError(f"논문을 찾을 수 없습니다: {paper_id}")
         sections = []
         for order, section_title, section_text in rows:
             title = str(section_title or "").strip()
-            if re.search(r"^(?:references|bibliography|참고문헌)\b", title, re.I):
+            if _EXCLUDED_SECTION.search(title):
                 continue
             text = str(section_text or "").strip()
             if text:
@@ -463,10 +468,9 @@ class SummaryTool:
             self._init_db(db)
             for section_order, section_title, section_text in sections:
                 protected = protect_markup(section_text)
-                selected_text = extractive_section_summary(
-                    protected.text, section_title, max_sentences=5
-                )
-                chunks = paragraph_chunks(selected_text, self.max_chars)
+                # 정확도를 위해 TF-IDF로 문장을 버리지 않고 섹션 원문 전체를 사용한다.
+                # paragraph_chunks는 빈 줄과 문단 경계를 우선 보존하면서 긴 섹션만 나눈다.
+                chunks = paragraph_chunks(protected.text, self.max_chars)
                 for index, chunk in enumerate(chunks, 1):
                     protection = protected_for_chunk(chunk, protected)
                     original_chunk = restore_markup(chunk, protection)
@@ -483,7 +487,12 @@ class SummaryTool:
             artifacts = [f"{token}: {combined_protection.replacements[token]}" for token in combined_protection.order]
             if artifacts:
                 prompt += "\n\n[표·수식 참고]\n" + "\n".join(artifacts)
-            result = self._generate(prompt, model=self.model, max_tokens=DEFAULT_MAX_TOKENS, temperature=DEFAULT_TEMPERATURE, timeout=DEFAULT_TIMEOUT)
+            # 최종 4단계 통합은 청크 요약보다 출력이 길어질 수 있으므로
+            # 설정값(1536)이 작아도 잘림을 피할 최소 여유를 둔다.
+            result = self._generate(
+                prompt, model=self.model, max_tokens=max(DEFAULT_MAX_TOKENS, 2048),
+                temperature=DEFAULT_TEMPERATURE, timeout=DEFAULT_TIMEOUT,
+            )
             paper_summary = self._restore_or_repair(str(result).strip(), combined_protection)
 
             # 모든 청크와 논문 통합 요약이 성공한 뒤 최종 테이블에 반영한다.
@@ -495,13 +504,7 @@ class SummaryTool:
             db.commit()
         markdown = self._build_markdown(title, paper_summary)
         result = SummaryResult(paper_id, title, markdown, len(final_chunks), self.model)
-        if self.save_vector:
-            self._save_to_vector_db(result)
         return result
-
-    def _save_to_vector_db(self, result: SummaryResult) -> int:
-        """저장된 요약 전체를 data/vector_db의 ChromaDB에 저장한다."""
-        return save_summary_to_chroma(self.vector_store, result)
 
     def _summarize_single_call(
         self, paper_id: str, title: str, sections: list[tuple[int, str, str]]
@@ -541,8 +544,6 @@ class SummaryTool:
         result = SummaryResult(
             paper_id, title, self._build_markdown(title, paper_summary), 1, self.model
         )
-        if self.save_vector:
-            self._save_to_vector_db(result)
         return result
 
     @staticmethod
