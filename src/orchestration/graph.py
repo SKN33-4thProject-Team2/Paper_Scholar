@@ -237,6 +237,8 @@ def build_graph(
         steps: list[Route] = list(decision.steps)
         route = steps.pop(0)
         routed = dispatch(state, route, steps, reason=decision.reason)
+        routed["human_input_required"] = route == "human"
+        routed["human_question"] = decision.human_question
         routed["deep_search_selection_required"] = decision.await_selection
         if decision.selected_paper_ids:
             routed["paper_ids"] = list(decision.selected_paper_ids)
@@ -252,20 +254,37 @@ def build_graph(
             "node_history": ["finish"],
         }
 
+    def human(state: WorkflowState) -> dict[str, Any]:
+        """Return a clarification instead of guessing a tool execution."""
+
+        question = str(state.get("human_question") or "").strip()
+        if not question:
+            question = (
+                "요청을 정확히 처리하려면 원하는 작업과 대상 논문 또는 주제를 "
+                "문장으로 알려주세요."
+            )
+        return {
+            "human_input_required": True,
+            "response": question,
+            "node_history": ["human"],
+        }
+
     builder = StateGraph(WorkflowState)
     builder.add_node("supervisor", supervisor)
     for name, node in graph_nodes.items():
         builder.add_node(name, _guarded(name, node))
+    builder.add_node("human", human)
     builder.add_node("finish", finish)
 
     builder.add_edge(START, "supervisor")
     builder.add_conditional_edges(
         "supervisor",
         next_route,
-        {**{name: name for name in graph_nodes}, "finish": "finish"},
+        {**{name: name for name in graph_nodes}, "human": "human", "finish": "finish"},
     )
     for name in graph_nodes:
         builder.add_edge(name, "supervisor")
+    builder.add_edge("human", "finish")
     builder.add_edge("finish", END)
 
     return builder.compile(

@@ -44,9 +44,16 @@ def _record(value: Any) -> dict[str, Any]:
 
 
 def _default_keyword_tool():
-    from tools.keyword_tool import KeywordTool
+    from tools.keyword_tool import generate_arxiv_keywords
 
-    return KeywordTool()
+    class FunctionKeywordTool:
+        """함수형 LangChain Tool을 Supervisor 노드의 기존 호출 규약에 맞춘다."""
+
+        @staticmethod
+        def generate_keywords(user_query: str) -> dict[str, Any]:
+            return generate_arxiv_keywords.invoke({"user_query": user_query})
+
+    return FunctionKeywordTool()
 
 
 def _default_search_bot():
