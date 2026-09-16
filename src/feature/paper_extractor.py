@@ -263,7 +263,7 @@ class UserIntent(BaseModel):
 # [Class 1: PaperExtractor - 본문 추출 및 인용문헌 매핑 저장 엔진]
 # ---------------------------------------------------------------------
 class PaperExtractor:
-    """PDF를 팀 정제 규칙대로 가공하여 메인 DB와 인용문헌(References) DB에 paper_id 기준으로 저장/업데이트하는 클래스."""
+    """PDF를 팀 정제 규칙대로 가공해 paper_sections DB에 저장하는 클래스."""
 
     def __init__(
         self,
@@ -279,8 +279,6 @@ class PaperExtractor:
         self.output_dir = Path(output_dir) if output_dir else DEFAULT_OUTPUT_DIR
 
         self.db_path = self.output_dir / "extracted_papers.db"
-        self.ref_db_path = self.output_dir / "extracted_papers_ref.db"
-        self.json_path = self.output_dir / "extracted_papers.json"
 
         self.use_vision = use_vision
         self.vision_workers = max(1, vision_workers)
@@ -322,19 +320,45 @@ class PaperExtractor:
         raise PaperExtractionError(f"'{paper_id}' 에 해당하는 PDF가 없습니다.")
 
     def is_extracted(self, paper_id: str) -> bool:
-        if not self.db_path.is_file():
-            return False
+        self._init_db()
         with closing(sqlite3.connect(self.db_path)) as conn:
-            row = conn.execute("SELECT 1 FROM extracted WHERE id = ?", (paper_id,)).fetchone()
+            row = conn.execute(
+                "SELECT 1 FROM paper_sections WHERE paper_id = ? LIMIT 1",
+                (paper_id,),
+            ).fetchone()
         return row is not None
 
     def get(self, paper_id: str) -> dict | None:
         if not self.db_path.is_file():
             return None
         with closing(sqlite3.connect(self.db_path)) as conn:
-            conn.row_factory = sqlite3.Row
-            row = conn.execute("SELECT * FROM extracted WHERE id = ?", (paper_id,)).fetchone()
-        return dict(row) if row else None
+            rows = conn.execute(
+                """
+                SELECT section_text
+                FROM paper_sections
+                WHERE paper_id = ?
+                ORDER BY section_order
+                """,
+                (paper_id,),
+            ).fetchall()
+        if not rows:
+            return None
+
+        title = paper_id
+        if self.metadata_db.is_file():
+            with closing(sqlite3.connect(self.metadata_db)) as conn:
+                row = conn.execute(
+                    "SELECT title FROM papers WHERE id = ?", (paper_id,)
+                ).fetchone()
+            if row and row[0]:
+                title = str(row[0])
+        return {
+            "id": paper_id,
+            "title": title,
+            "source_pdf": "",
+            "content": "\n\n".join(str(row[0] or "") for row in rows),
+            "n_pages": 0,
+        }
 
     def extract(self, paper_id: str, *, force: bool = False) -> ExtractionResult:
         if self.is_extracted(paper_id) and not force:
@@ -954,135 +978,56 @@ class PaperExtractor:
         with closing(sqlite3.connect(self.db_path)) as conn, conn:
             conn.execute(
                 """
-                CREATE TABLE IF NOT EXISTS extracted (
-                    id           TEXT PRIMARY KEY,
-                    title        TEXT,
-                    source_pdf   TEXT,
-                    abstract     TEXT,
-                    introduction TEXT,
-                    related_work TEXT,
-                    method       TEXT,
-                    experiment   TEXT,
-                    result       TEXT,
-                    conclusion   TEXT,
-                    others       TEXT,
-                    content      TEXT,
-                    n_pages      INTEGER,
-                    n_chars      INTEGER,
-                    extractor    TEXT,
-                    created_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+                CREATE TABLE IF NOT EXISTS paper_sections (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    paper_id TEXT NOT NULL,
+                    section_order INTEGER NOT NULL,
+                    section_title TEXT,
+                    section_text TEXT,
+                    section_html TEXT,
+                    extracted_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE (paper_id, section_order)
                 )
                 """
             )
-
-        with closing(sqlite3.connect(self.ref_db_path)) as conn, conn:
-            conn.execute(
-                """
-                CREATE TABLE IF NOT EXISTS extracted_ref (
-                    id             INTEGER PRIMARY KEY AUTOINCREMENT,
-                    paper_id       TEXT,
-                    ref_index      INTEGER,
-                    reference_text TEXT,
-                    created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    FOREIGN KEY(paper_id) REFERENCES extracted(id) ON DELETE CASCADE
-                )
-                """
-            )
-            conn.execute("CREATE INDEX IF NOT EXISTS idx_extracted_ref_paper_id ON extracted_ref(paper_id);")
 
     def _save(self, result: ExtractionResult) -> None:
         self._init_db()
 
         with closing(sqlite3.connect(self.db_path)) as conn, conn:
-            existing = conn.execute("SELECT 1 FROM extracted WHERE id = ?", (result.id,)).fetchone()
-
-            if existing:
-                conn.execute(
-                    """
-                    UPDATE extracted SET
-                        title = ?,
-                        source_pdf = ?,
-                        abstract = ?,
-                        introduction = ?,
-                        related_work = ?,
-                        method = ?,
-                        experiment = ?,
-                        result = ?,
-                        conclusion = ?,
-                        others = ?,
-                        content = ?,
-                        n_pages = ?,
-                        n_chars = ?,
-                        extractor = ?,
-                        created_at = CURRENT_TIMESTAMP
-                    WHERE id = ?
-                    """,
-                    (
-                        result.title,
-                        result.source_pdf,
-                        *[result.columns.get(name, "") for name in IMRAD_COLUMNS],
-                        json.dumps(result.others, ensure_ascii=False),
-                        result.content,
-                        result.n_pages,
-                        result.n_chars,
-                        result.extractor,
-                        result.id,
-                    ),
+            conn.execute("DELETE FROM paper_sections WHERE paper_id = ?", (result.id,))
+            sections = [section for section in result.sections if section.text.strip()]
+            if not sections:
+                sections = [Section(no="", title="Full Text", pages=(), text=result.content)]
+            if result.references and not any(
+                "reference" in section.title.lower() or "bibliography" in section.title.lower()
+                for section in sections
+            ):
+                sections.append(
+                    Section(
+                        no="",
+                        title="References",
+                        pages=(),
+                        text="\n".join(str(reference) for reference in result.references),
+                    )
                 )
-            else:
-                conn.execute(
-                    """
-                    INSERT INTO extracted 
-                    (id, title, source_pdf, abstract, introduction, related_work, method, 
-                     experiment, result, conclusion, others, content, 
-                     n_pages, n_chars, extractor, created_at) 
-                    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-                    """,
+            conn.executemany(
+                """
+                INSERT INTO paper_sections
+                    (paper_id, section_order, section_title, section_text, section_html)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                [
                     (
                         result.id,
-                        result.title,
-                        result.source_pdf,
-                        *[result.columns.get(name, "") for name in IMRAD_COLUMNS],
-                        json.dumps(result.others, ensure_ascii=False),
-                        result.content,
-                        result.n_pages,
-                        result.n_chars,
-                        result.extractor,
-                    ),
-                )
-
-        with closing(sqlite3.connect(self.ref_db_path)) as conn, conn:
-            conn.execute("DELETE FROM extracted_ref WHERE paper_id = ?", (result.id,))
-            for idx, ref_text in enumerate(result.references, start=1):
-                conn.execute(
-                    "INSERT INTO extracted_ref (paper_id, ref_index, reference_text) VALUES (?, ?, ?)",
-                    (result.id, idx, ref_text)
-                )
-
-        self._rebuild_json()
-
-    def _rebuild_json(self) -> None:
-        with closing(sqlite3.connect(self.db_path)) as conn:
-            rows = conn.execute("SELECT id, title FROM extracted ORDER BY created_at DESC").fetchall()
-
-        refs_map: dict[str, list[str]] = {}
-        if self.ref_db_path.is_file():
-            with closing(sqlite3.connect(self.ref_db_path)) as conn:
-                ref_rows = conn.execute(
-                    "SELECT paper_id, reference_text FROM extracted_ref WHERE paper_id IS NOT NULL ORDER BY paper_id, ref_index"
-                ).fetchall()
-                for p_id, r_text in ref_rows:
-                    refs_map.setdefault(p_id, []).append(r_text)
-
-        payload = {
-            row[0]: {
-                "id": row[0],
-                "title": row[1],
-                "reference_pdf": refs_map.get(row[0], []),
-            }
-            for row in rows
-        }
-        self.json_path.write_text(json.dumps(payload, ensure_ascii=False, indent=4), encoding="utf-8")
+                        order,
+                        f"{section.no} {section.title}".strip(),
+                        section.text,
+                        "",
+                    )
+                    for order, section in enumerate(sections, start=1)
+                ],
+            )
 
 # ---------------------------------------------------------------------
 # [Class 2: PaperExtraRAGBot - 대화형 탐색 및 백그라운드 번역/요약 챗봇]

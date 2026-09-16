@@ -138,6 +138,10 @@ class SupervisorRouter:
             or state.get("search_results")
             or state.get("library_results")
         )
+        active_deep_research_paper_id = str(
+            state.get("deep_research_paper_id") or ""
+        ).strip()
+        has_active_paper = bool(state.get("paper_ids") or active_deep_research_paper_id)
 
         # Tool name만 말하거나 대명사만 남긴 요청은 대상·주제를 추측하면
         # 안 된다. 기존 기능을 실행하지 않고 Human-in-the-Loop으로 보낸다.
@@ -155,7 +159,7 @@ class SupervisorRouter:
             "도와줘",
         } or (
             normalized_query in _GENERIC_REQUESTS
-            and not state.get("paper_ids")
+            and not has_active_paper
         )
         if requires_topic or lacks_action_or_target:
             return _human_decision(
@@ -168,7 +172,7 @@ class SupervisorRouter:
             phrase in normalized_query
             for phrase in ("이 논문", "그 논문", "해당 논문", "이거", "그거")
         )
-        if unresolved_pronoun and not state.get("paper_ids"):
+        if unresolved_pronoun and not has_active_paper:
             return _human_decision(
                 "지시 대상 논문이 선택되지 않음",
                 "어떤 논문을 처리할지 제목, paper_id 또는 목록 번호로 알려주세요.",
@@ -226,7 +230,7 @@ class SupervisorRouter:
         has_candidate_selection = selected_by_number or selected_by_title
         has_direct_research_target = bool(
             state.get("paper_ids")
-            or state.get("deep_research_paper_id")
+            or active_deep_research_paper_id
             or state.get("selected_papers")
             or has_candidate_selection
         )
@@ -236,6 +240,7 @@ class SupervisorRouter:
         )
         download_terms = ("다운로드", "다운받", "download")
         wants_download = any(term in query for term in download_terms)
+        wants_extract = any(term in query for term in ("추출", "extract"))
         wants_translate = any(term in query for term in ("번역", "translate"))
         wants_summarize = any(
             term in query for term in ("요약", "summar", "summary")
@@ -259,6 +264,22 @@ class SupervisorRouter:
         )
         deep_target_number = selected_numbers[-1] if selected_numbers else 0
         deep_target_id = candidate_id(deep_target_number)
+
+        # 직전 Deep Research에서 선택한 한 편을 기준으로 하는 짧은 후속
+        # 요약은 새 번역·요약 산출물 파이프라인이 아니다. 같은 논문의 근거를
+        # 다시 찾아 답변하게 하며, 대상이 없으면 추출을 추측 실행하지 않는다.
+        if wants_summarize and active_deep_research_paper_id and not selected_candidate_ids:
+            return SupervisorDecision(
+                steps=["deep_search"],
+                reason="선택 논문에 대한 후속 요약 질의",
+                selected_paper_ids=[active_deep_research_paper_id],
+                deep_search_paper_id=active_deep_research_paper_id,
+            )
+        if wants_summarize and not selected_candidate_ids and not state.get("paper_ids"):
+            return _human_decision(
+                "요약 대상 논문이 선택되지 않음",
+                "어느 논문을 요약할까요? 논문 제목, paper_id 또는 목록 번호를 알려주세요.",
+            )
 
         # 목록에서 번호로 고른 논문은 paper_ids로 확정한 뒤 전체 처리
         # 파이프라인에 전달한다. 요약은 번역 결과를 사용하므로 번역을 포함한다.
@@ -306,6 +327,28 @@ class SupervisorRouter:
                 reason="지정된 추출 논문에서 심층 질문 근거 검색",
                 selected_paper_ids=([deep_target_id] if deep_target_id else []),
                 deep_search_paper_id=deep_target_id,
+            )
+
+        # 추출 요청은 LLM에게 재판단시키지 않는다. 선택 논문이 이미
+        # 다운로드된 경우에는 Extract만 실행하고, PDF가 없을 수 있는
+        # 새 검색 결과라면 필요한 데이터 의존 단계만 먼저 실행한다.
+        if wants_extract:
+            if selected_candidate_ids:
+                steps = ["extract"] if state.get("downloaded_paths") else ["download", "extract"]
+                return SupervisorDecision(
+                    steps=steps,
+                    reason="선택 논문 PDF 본문 추출 요청",
+                    selected_paper_ids=selected_candidate_ids,
+                    download_paper_ids=(selected_candidate_ids if "download" in steps else []),
+                )
+            if state.get("paper_ids"):
+                return SupervisorDecision(
+                    steps=["extract"],
+                    reason="지정 논문 PDF 본문 추출 요청",
+                )
+            return _human_decision(
+                "추출 대상 논문이 선택되지 않음",
+                "어느 논문을 추출할까요? 논문 제목, paper_id 또는 목록 번호를 알려주세요.",
             )
 
         # A request can chain multiple stages in one sentence (e.g. "찾아서

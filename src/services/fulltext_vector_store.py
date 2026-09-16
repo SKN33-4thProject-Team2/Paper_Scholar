@@ -190,17 +190,25 @@ class ChromaFullTextStore:
         except sqlite3.Error:
             return {}
 
-    def _read_papers(self) -> list[tuple[str, str, list[tuple[str, str]]]]:
-        """paper_sections 를 절 단위로 읽어 표·수식을 되살린 본문을 돌려준다."""
+    def _read_papers(
+        self, *, paper_id: str | None = None
+    ) -> list[tuple[str, str, list[tuple[str, str]]]]:
+        """선택 논문 또는 전체 paper_sections를 절 단위로 읽는다."""
         if not self.db_path.exists():
             raise FullTextStoreError(f"논문 원본 DB를 찾을 수 없습니다: {self.db_path}")
         try:
             with sqlite3.connect(self.db_path) as conn:
                 conn.row_factory = sqlite3.Row
-                rows = conn.execute(
+                query = (
                     "SELECT paper_id, section_order, section_title, section_text, section_html "
-                    "FROM paper_sections ORDER BY paper_id, section_order"
-                ).fetchall()
+                    "FROM paper_sections"
+                )
+                params: tuple[str, ...] = ()
+                if paper_id:
+                    query += " WHERE paper_id = ?"
+                    params = (paper_id,)
+                query += " ORDER BY paper_id, section_order"
+                rows = conn.execute(query, params).fetchall()
         except sqlite3.Error as exc:
             raise FullTextStoreError("논문 원본 DB를 읽지 못했습니다.") from exc
 
@@ -225,26 +233,27 @@ class ChromaFullTextStore:
             for paper_id, sections in grouped.items()
         ]
 
-    def ensure_index(self) -> int:
+    def ensure_index(self, *, paper_id: str | None = None) -> int:
+        """선택 논문 또는 전체 논문을 Chroma 컬렉션에 동기화한다."""
         collection = self._collection()
         added = 0
-        for paper_id, title, sections in self._read_papers():
+        for indexed_paper_id, title, sections in self._read_papers(paper_id=paper_id):
             source_hash = hashlib.sha256("\n".join(text for _, text in sections).encode()).hexdigest()
-            existing = collection.get(where={"paper_id": paper_id}, include=["metadatas"])
+            existing = collection.get(where={"paper_id": indexed_paper_id}, include=["metadatas"])
             existing_metadata = existing.get("metadatas") or []
             if existing_metadata and all(item.get("source_hash") == source_hash for item in existing_metadata):
                 continue
             if existing.get("ids"):
-                collection.delete(where={"paper_id": paper_id})
+                collection.delete(where={"paper_id": indexed_paper_id})
             ids: list[str] = []
             documents: list[str] = []
             metadata: list[dict[str, Any]] = []
             for section, text in sections:
                 for index, chunk in enumerate(split_section(text)):
-                    ids.append(f"{paper_id}:{section}:{index}")
+                    ids.append(f"{indexed_paper_id}:{section}:{index}")
                     documents.append(f"{title}\n\n{section}\n{chunk}")
                     metadata.append({
-                        "paper_id": paper_id,
+                        "paper_id": indexed_paper_id,
                         "title": title,
                         "section": section,
                         "chunk_index": index,
@@ -261,9 +270,10 @@ class ChromaFullTextStore:
     def search(self, query: str, *, limit: int = 5, paper_id: str | None = None) -> list[dict[str, object]]:
         if not query.strip():
             raise ValueError("본문 검색어가 비어 있습니다.")
-        self.ensure_index()
+        selected_paper_id = paper_id.strip() if paper_id else None
+        self.ensure_index(paper_id=selected_paper_id)
         collection = self._collection()
-        where = {"paper_id": paper_id} if paper_id else None
+        where = {"paper_id": selected_paper_id} if selected_paper_id else None
         available = len(collection.get(where=where).get("ids", [])) if where else collection.count()
         if available == 0:
             return []

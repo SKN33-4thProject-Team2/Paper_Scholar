@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import sqlite3
 from collections.abc import Callable
 from pathlib import Path
@@ -19,6 +18,7 @@ BASE_DIR = PROJECT_DIR / "data" / "paper_extract"
 JSON_LIST_PATH = BASE_DIR / "extracted_papers.json"
 DB_PATH = BASE_DIR / "extracted_papers.db"
 REF_DB_PATH = BASE_DIR / "extracted_papers_ref.db"
+LIBRARY_DB_PATH = PROJECT_DIR / "data" / "paper_list" / "saved_papers.db"
 PAPER_CANDIDATE_LIMIT = 5
 
 
@@ -51,9 +51,9 @@ class SearchPaperPassagesInput(BaseModel):
 
 
 class DeepSearch:
-    """로컬 논문 카탈로그와 본문 Vector DB를 조회한다.
+    """로컬 논문 DB와 본문 Vector DB를 조회한다.
 
-    파일·DB 경로와 외부 의존성을 생성자에서 주입할 수 있으므로 LangGraph
+    DB 경로와 외부 의존성을 생성자에서 주입할 수 있으므로 LangGraph
     노드와 통합 테스트에서 같은 검색 계약을 재사용할 수 있다. 무거운 임베딩과
     Chroma 객체는 실제 검색 시점까지 생성하지 않는다.
     """
@@ -64,18 +64,22 @@ class DeepSearch:
         json_list_path: str | Path = JSON_LIST_PATH,
         db_path: str | Path = DB_PATH,
         reference_db_path: str | Path = REF_DB_PATH,
+        library_db_path: str | Path = LIBRARY_DB_PATH,
         embeddings_factory: Callable[[], Any] | None = None,
         fulltext_store_factory: Callable[[], Any] | None = None,
     ) -> None:
+        # 기존 호출부의 주입 인자는 호환성을 위해 유지한다. Deep Search의
+        # 실행 데이터는 db_path의 paper_sections만 사용한다.
         self.json_list_path = Path(json_list_path)
         self.db_path = Path(db_path)
         self.reference_db_path = Path(reference_db_path)
+        self.library_db_path = Path(library_db_path)
         self._embeddings_factory = embeddings_factory
         self._fulltext_store_factory = fulltext_store_factory
 
         self._cache_lock = RLock()
         self._paper_list_cache: dict[str, Any] | None = None
-        self._paper_list_mtime_ns: int | None = None
+        self._paper_list_mtime_ns: tuple[int, int | None] | None = None
         self._vector_store: Any | None = None
         self._vector_store_mtime_ns: int | None = None
         self._fulltext_store: Any | None = None
@@ -101,13 +105,23 @@ class DeepSearch:
         self._vector_store_mtime_ns = None
 
     def _load_paper_catalog(self) -> dict[str, Any]:
-        """파일이 변경된 경우에만 논문 카탈로그를 다시 읽는다."""
+        """paper_sections를 논문 카탈로그로 읽는다.
+
+        추출 DB를 실행 시점의 단일 기준으로 사용한다. JSON 목록은 내보내기
+        산출물일 뿐, Deep Search 실행의 선행 조건이 아니다.
+        """
         try:
-            mtime_ns = self.json_list_path.stat().st_mtime_ns
+            db_mtime_ns = self.db_path.stat().st_mtime_ns
         except FileNotFoundError as exc:
             raise DeepSearchError(
-                f"논문 리스트 파일 누락: {self.json_list_path}"
+                f"논문 원본 DB 누락: {self.db_path}"
             ) from exc
+        library_mtime_ns = (
+            self.library_db_path.stat().st_mtime_ns
+            if self.library_db_path.is_file()
+            else None
+        )
+        mtime_ns = (db_mtime_ns, library_mtime_ns)
 
         with self._cache_lock:
             if (
@@ -117,22 +131,50 @@ class DeepSearch:
                 return self._paper_list_cache
 
             try:
-                with self.json_list_path.open("r", encoding="utf-8-sig") as file:
-                    payload = json.load(file)
-            except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+                with self._connect_readonly(self.db_path) as connection:
+                    rows = connection.execute(
+                        """
+                        SELECT DISTINCT paper_id
+                        FROM paper_sections
+                        WHERE paper_id IS NOT NULL AND TRIM(paper_id) <> ''
+                        ORDER BY paper_id
+                        """
+                    ).fetchall()
+            except sqlite3.Error as exc:
                 raise DeepSearchError(
-                    f"논문 리스트 파일을 읽지 못했습니다: {self.json_list_path}"
+                    "추출 DB의 paper_sections 테이블을 읽지 못했습니다."
                 ) from exc
-            if not isinstance(payload, dict):
-                raise DeepSearchError(
-                    "논문 리스트 JSON의 최상위 값은 객체여야 합니다."
-                )
+
+            titles = self._load_library_titles()
+            payload = {
+                str(paper_id): {
+                    "id": str(paper_id),
+                    "title": titles.get(str(paper_id), str(paper_id)),
+                }
+                for (paper_id,) in rows
+            }
 
             if self._paper_list_mtime_ns != mtime_ns:
                 self._invalidate_vector_store()
             self._paper_list_cache = payload
             self._paper_list_mtime_ns = mtime_ns
             return payload
+
+    def _load_library_titles(self) -> dict[str, str]:
+        """서재 DB의 제목을 paper_sections 논문 ID에 연결한다."""
+        if not self.library_db_path.is_file():
+            return {}
+        try:
+            with self._connect_readonly(self.library_db_path) as connection:
+                rows = connection.execute(
+                    "SELECT id, title FROM papers WHERE id IS NOT NULL"
+                ).fetchall()
+        except sqlite3.Error:
+            return {}
+        return {
+            str(paper_id): str(title).strip() or str(paper_id)
+            for paper_id, title in rows
+        }
 
     def _create_embeddings(self) -> Any:
         if self._embeddings_factory is not None:
@@ -218,7 +260,7 @@ class DeepSearch:
         }
 
     def get_paper_details(self, paper_id: str) -> dict[str, Any]:
-        """논문 ID로 초록, 본문, 참고문헌을 조회한다."""
+        """논문 ID로 paper_sections의 초록·본문·참고문헌을 조회한다."""
         normalized_paper_id = paper_id.strip()
         if not normalized_paper_id:
             raise DeepSearchError("논문 ID를 입력해 주세요.")
@@ -227,35 +269,47 @@ class DeepSearch:
 
         try:
             with self._connect_readonly(self.db_path) as connection:
-                row = connection.execute(
-                    "SELECT title, abstract, content FROM extracted WHERE id = ?",
-                    (normalized_paper_id,),
-                ).fetchone()
-        except sqlite3.Error as exc:
-            raise DeepSearchError(f"DB 조회 오류: {exc}") from exc
-        if row is None:
-            raise DeepSearchError(f"ID '{normalized_paper_id}' 논문 없음.")
-
-        details: dict[str, Any] = {
-            "paper_id": normalized_paper_id,
-            "title": row[0],
-            "abstract": row[1],
-            "content": row[2],
-        }
-        if not self.reference_db_path.is_file():
-            details["references"] = ["레퍼런스 DB 누락됨"]
-            return details
-
-        try:
-            with self._connect_readonly(self.reference_db_path) as connection:
                 rows = connection.execute(
-                    "SELECT ref_index, reference_text FROM extracted_ref "
-                    "WHERE paper_id = ? ORDER BY ref_index",
+                    """
+                    SELECT section_title, section_text
+                    FROM paper_sections
+                    WHERE paper_id = ?
+                    ORDER BY section_order
+                    """,
                     (normalized_paper_id,),
                 ).fetchall()
-            details["references"] = [f"[{index}] {text}" for index, text in rows]
-        except sqlite3.Error:
-            details["references"] = ["레퍼런스 DB 파싱 오류 발생"]
+        except sqlite3.Error as exc:
+            raise DeepSearchError(f"DB 조회 오류: {exc}") from exc
+        if not rows:
+            raise DeepSearchError(f"ID '{normalized_paper_id}' 논문 없음.")
+
+        sections = [
+            (str(section_title or "").strip(), str(section_text or "").strip())
+            for section_title, section_text in rows
+        ]
+        content_sections = [
+            text
+            for title, text in sections
+            if text and "reference" not in title.lower() and "bibliography" not in title.lower()
+        ]
+        abstract = next(
+            (text for title, text in sections if text and "abstract" in title.lower()),
+            content_sections[0] if content_sections else "",
+        )
+        references = [
+            text
+            for title, text in sections
+            if text and ("reference" in title.lower() or "bibliography" in title.lower())
+        ]
+        details: dict[str, Any] = {
+            "paper_id": normalized_paper_id,
+            "title": self._load_library_titles().get(
+                normalized_paper_id, normalized_paper_id
+            ),
+            "abstract": abstract,
+            "content": "\n\n".join(content_sections),
+            "references": references,
+        }
         return details
 
     def search_passages(
