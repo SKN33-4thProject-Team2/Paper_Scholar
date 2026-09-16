@@ -244,6 +244,9 @@ def build_graph(
             routed["paper_ids"] = list(decision.selected_paper_ids)
         routed["download_paper_ids"] = list(decision.download_paper_ids)
         routed["deep_search_paper_id"] = decision.deep_search_paper_id
+        routed["search_result_limit"] = decision.search_result_limit
+        routed["save_paper_count"] = decision.save_paper_count
+        routed["explain_paper_rank"] = decision.explain_paper_rank
         return routed
 
     def finish(state: WorkflowState) -> dict[str, Any]:

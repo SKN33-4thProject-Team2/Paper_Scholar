@@ -23,6 +23,13 @@ from orchestration.state import initial_state
 
 
 PAPER = {"paper_id": "paper-1", "id": "paper-1", "title": "RAG Paper"}
+PAPERS = [
+    PAPER,
+    *[
+        {"paper_id": f"paper-{index}", "id": f"paper-{index}", "title": f"Paper {index}"}
+        for index in range(2, 16)
+    ],
+]
 
 
 def fake_nodes():
@@ -58,14 +65,33 @@ def fake_nodes():
             "node_history": ["deep_search"],
         }
 
+    def search(state):
+        limit = int(state.get("search_result_limit", 0)) or 1
+        papers = PAPERS[:limit]
+        save_count = int(state.get("save_paper_count", 0))
+        if not save_count:
+            return {
+                "search_results": papers,
+                "selection_candidates": papers,
+                "selection_source": "search",
+                "node_history": ["search"],
+            }
+        saved_papers = papers[:save_count]
+        explain_paper = saved_papers[int(state.get("explain_paper_rank", 1)) - 1]
+        return {
+            "search_results": papers,
+            "selected_papers": saved_papers,
+            "selection_candidates": papers,
+            "selection_source": "search",
+            "paper_ids": [explain_paper["id"]],
+            "download_paper_ids": [paper["id"] for paper in saved_papers],
+            "deep_search_paper_id": explain_paper["id"],
+            "node_history": ["search"],
+        }
+
     return {
         "keyword": lambda state: {"keywords": ["RAG"], "node_history": ["keyword"]},
-        "search": lambda state: {
-            "search_results": [PAPER],
-            "selection_candidates": [PAPER],
-            "selection_source": "search",
-            "node_history": ["search"],
-        },
+        "search": search,
         "library": lambda state: {
             "library_results": [PAPER],
             "selection_candidates": [PAPER],
@@ -73,7 +99,7 @@ def fake_nodes():
             "node_history": ["library"],
         },
         "download": lambda state: {
-            "paper_ids": state.get("download_paper_ids") or ["paper-1"],
+            "paper_ids": state.get("paper_ids") or ["paper-1"],
             "downloaded_paths": ["paper-1.pdf"],
             "node_history": ["download"],
         },
@@ -112,6 +138,31 @@ class StateGraphTest(unittest.TestCase):
         )
         self.assertEqual(result["node_history"], ["keyword", "search", "finish"])
         self.assertIn("RAG Paper", result["response"])
+
+    def test_composite_request_saves_top_five_and_explains_top_one(self):
+        result = self.graph.invoke(
+            initial_state(
+                "LLM 관련 논문 10개 찾고 그 중 5개 저장하고 최상위 논문 1개 설명해줘"
+            ),
+            config={"configurable": {"thread_id": "test-ranked-composite"}},
+        )
+        self.assertEqual(
+            result["node_history"],
+            [
+                "keyword",
+                "search",
+                "download",
+                "extract",
+                "deep_search",
+                "deep_research",
+                "finish",
+            ],
+        )
+        self.assertEqual(len(result["search_results"]), 10)
+        self.assertEqual(len(result["selected_papers"]), 5)
+        self.assertEqual(result["download_paper_ids"], [f"paper-{index}" for index in range(1, 6)])
+        self.assertEqual(result["paper_ids"], ["paper-1"])
+        self.assertEqual(result["errors"], [])
 
     def test_selected_downloaded_paper_extracts_without_other_stages(self):
         state = initial_state("1번 논문 추출해줘")

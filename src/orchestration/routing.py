@@ -35,6 +35,9 @@ class SupervisorDecision(BaseModel):
     selected_paper_ids: list[str] = Field(default_factory=list)
     download_paper_ids: list[str] = Field(default_factory=list)
     deep_search_paper_id: str = ""
+    search_result_limit: int = Field(default=0, ge=0, le=15)
+    save_paper_count: int = Field(default=0, ge=0, le=15)
+    explain_paper_rank: int = Field(default=0, ge=0, le=15)
     human_question: str = ""
 
 
@@ -245,6 +248,39 @@ class SupervisorRouter:
         wants_summarize = any(
             term in query for term in ("요약", "summar", "summary")
         )
+        wants_save = any(term in query for term in ("저장", "보관"))
+
+        # "LLM 논문 10개 찾고 그중 5개 저장한 뒤 최상위 1개 설명"처럼
+        # 검색 결과의 순위별 후속 작업이 한 문장에 포함된 요청은 별도 계획으로
+        # 처리한다. 일반 검색에는 적용하지 않는다.
+        search_count_match = re.search(
+            r"(\d+)\s*(?:개|편)\s*(?:찾|검색)", normalized_query
+        )
+        save_count_match = re.search(
+            r"(\d+)\s*(?:개|편)\s*(?:저장|보관)", normalized_query
+        )
+        ranked_explanation = (
+            wants_save
+            and asks_direct_research
+            and search_count_match is not None
+            and save_count_match is not None
+            and any(term in query for term in ("최상위", "상위", "1위", "첫 번째", "첫번째"))
+        )
+        if ranked_explanation:
+            search_limit = int(search_count_match.group(1))
+            save_count = int(save_count_match.group(1))
+            if not 1 <= save_count <= search_limit <= 15:
+                return _human_decision(
+                    "복합 요청의 검색·저장 개수가 유효하지 않음",
+                    "검색 개수는 1~15편이고, 저장 개수는 검색 개수 이하여야 합니다.",
+                )
+            return SupervisorDecision(
+                steps=["keyword", "search", "download", "extract", "deep_search"],
+                reason="상위 논문 저장 후 최상위 논문 심층 설명 요청",
+                search_result_limit=search_limit,
+                save_paper_count=save_count,
+                explain_paper_rank=1,
+            )
 
         def candidate_id(number: int) -> str:
             if not 0 < number <= len(selection_candidates):

@@ -151,12 +151,50 @@ class ArxivSearchNode:
         query = " OR ".join(f'"{term}"' for term in terms)
 
         raw_query = state["query"]
+        planned_limit = int(state.get("search_result_limit", 0))
         count_match = _COUNT_PATTERN.search(raw_query)
-        max_results = int(count_match.group(1)) if count_match else self._max_results
+        max_results = (
+            planned_limit
+            if planned_limit > 0
+            else int(count_match.group(1)) if count_match else self._max_results
+        )
         max_results = max(1, min(max_results, 15))
         sort_by = "n" if any(term in raw_query for term in _LATEST_TERMS) else "r"
 
         papers = list(self.bot.search_papers(query, sort_by=sort_by, max_results=max_results))
+        save_count = int(state.get("save_paper_count", 0))
+        if save_count:
+            saved_papers = papers[:save_count]
+            if saved_papers and hasattr(self.bot, "save_papers"):
+                try:
+                    # 복합 요청에서는 상위 N편만 메타데이터로 저장한다.
+                    # HTML 본문 추출은 PDF 추출 단계가 담당한다.
+                    self.bot.save_papers(saved_papers, extract_content=False)
+                except Exception:
+                    pass
+            explain_rank = max(1, int(state.get("explain_paper_rank", 1)))
+            explain_paper = (
+                saved_papers[explain_rank - 1]
+                if explain_rank <= len(saved_papers)
+                else None
+            )
+            explain_paper_id = str(
+                (explain_paper or {}).get("id") or ""
+            ).strip()
+            return {
+                "search_results": papers,
+                "selected_papers": saved_papers,
+                "selection_candidates": [_record(paper) for paper in papers],
+                "selection_source": "search",
+                "paper_ids": [explain_paper_id] if explain_paper_id else [],
+                "download_paper_ids": [
+                    str(paper.get("id") or "").strip()
+                    for paper in saved_papers
+                    if str(paper.get("id") or "").strip()
+                ],
+                "deep_search_paper_id": explain_paper_id,
+                "node_history": ["search"],
+            }
         # PaperExtractor resolves paper_id -> PDF file by looking the id up in
         # saved_papers.db, so search results must be persisted immediately —
         # otherwise a later download/extract step can save the PDF but never

@@ -61,6 +61,9 @@ class WorkflowState(TypedDict, total=False):
     max_steps: int
 
     keywords: list[str]
+    search_result_limit: int
+    save_paper_count: int
+    explain_paper_rank: int
     paper_ids: list[str]
     download_paper_ids: list[str]
     deep_search_paper_id: str
@@ -107,6 +110,9 @@ def initial_state(
         "messages": [HumanMessage(content=normalized)],
         "query": normalized,
         "thread_id": thread_id,
+        "search_result_limit": 0,
+        "save_paper_count": 0,
+        "explain_paper_rank": 0,
         "paper_ids": list(paper_ids or []),
         "download_paper_ids": [],
         "deep_search_paper_id": "",
