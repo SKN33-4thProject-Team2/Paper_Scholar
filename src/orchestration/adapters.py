@@ -111,6 +111,9 @@ class KeywordNode:
 
     def __call__(self, state: WorkflowState) -> dict[str, Any]:
         topic = state["query"]
+        related_paper_title = str(state.get("related_paper_title") or "").strip()
+        if related_paper_title:
+            topic = f"{related_paper_title} 관련 학술 논문"
         if int(state.get("retry_counts", {}).get("search", 0)) > 0:
             previous = ", ".join(state.get("keywords", []))
             topic = (
@@ -176,10 +179,10 @@ class ArxivSearchNode:
                     self.bot.save_papers(saved_papers, extract_content=False)
                 except Exception:
                     pass
-            explain_rank = max(1, int(state.get("explain_paper_rank", 1)))
+            explain_rank = int(state.get("explain_paper_rank", 0))
             explain_paper = (
                 saved_papers[explain_rank - 1]
-                if explain_rank <= len(saved_papers)
+                if 1 <= explain_rank <= len(saved_papers)
                 else None
             )
             explain_paper_id = str(
@@ -760,5 +763,6 @@ class DeepResearchNode:
             "deep_research_answer": response,
             "deep_research_sources": sources,
             "deep_research_paper_id": paper_id,
+            "last_research_paper_title": title,
             "node_history": ["deep_research"],
         }

@@ -40,6 +40,7 @@ class SupervisorDecision(BaseModel):
     explain_paper_rank: int = Field(default=0, ge=0, le=15)
     prioritize_primary_keyword: bool = False
     research_question: str = ""
+    related_paper_title: str = ""
     human_question: str = ""
 
 
@@ -251,6 +252,35 @@ class SupervisorRouter:
             term in query for term in ("요약", "summar", "summary")
         )
         wants_save = any(term in query for term in ("저장", "보관"))
+
+        # "위에 관련 논문 5개 찾아서 저장해줘"는 직전 심층 설명 논문을
+        # 주제로 이어받는다. 직전 대상이 없으면 주제를 추측하지 않는다.
+        related_followup = wants_save and any(
+            phrase in normalized_query
+            for phrase in ("위에 관련", "위의 관련", "방금 관련", "앞의 관련")
+        )
+        if related_followup:
+            related_title = str(state.get("last_research_paper_title") or "").strip()
+            count_match = re.search(r"(\d+)\s*(?:개|편)", normalized_query)
+            save_count = int(count_match.group(1)) if count_match else 0
+            if not related_title:
+                return _human_decision(
+                    "관련 논문의 기준 대상이 없음",
+                    "어떤 논문과 관련된 논문을 찾을까요? 먼저 논문을 한 편 선택하거나 제목을 알려주세요.",
+                )
+            if not 1 <= save_count <= 15:
+                return _human_decision(
+                    "관련 논문 저장 개수가 유효하지 않음",
+                    "저장할 관련 논문 수를 1~15편 사이로 알려주세요.",
+                )
+            return SupervisorDecision(
+                steps=["keyword", "search", "download"],
+                reason="직전 설명 논문과 관련된 논문 검색·저장 요청",
+                search_result_limit=save_count,
+                save_paper_count=save_count,
+                prioritize_primary_keyword=True,
+                related_paper_title=related_title,
+            )
 
         # "LLM 논문 10개 찾고 그중 5개 저장한 뒤 최상위 1개 설명"처럼
         # 검색 결과의 순위별 후속 작업이 한 문장에 포함된 요청은 별도 계획으로

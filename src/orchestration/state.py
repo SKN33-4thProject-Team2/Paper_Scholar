@@ -66,6 +66,8 @@ class WorkflowState(TypedDict, total=False):
     explain_paper_rank: int
     prioritize_primary_keyword: bool
     research_question: str
+    related_paper_title: str
+    last_research_paper_title: str
     paper_ids: list[str]
     download_paper_ids: list[str]
     deep_search_paper_id: str
