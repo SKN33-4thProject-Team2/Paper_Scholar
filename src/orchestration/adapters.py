@@ -148,6 +148,10 @@ class ArxivSearchNode:
             term for term in terms if term.strip().casefold() not in _GENERIC_KEYWORD_BLOCKLIST
         ]
         terms = filtered_terms or terms
+        if state.get("prioritize_primary_keyword") and terms:
+            # 복합 요청의 순위 선택은 첫 핵심 주제어를 기준으로 한다. 부가
+            # 키워드까지 OR로 넓히면 일반 NLP 논문이 상위에 섞일 수 있다.
+            terms = terms[:1]
         query = " OR ".join(f'"{term}"' for term in terms)
 
         raw_query = state["query"]
@@ -568,7 +572,7 @@ class DeepSearchNode:
 
         try:
             payload = self.searcher.search_passages(
-                state["query"],
+                str(state.get("research_question") or state["query"]),
                 paper_id=paper_id,
                 limit=self._limit,
             )
@@ -718,7 +722,10 @@ class DeepResearchNode:
             "translation_text": evidence,
             "structured_summary": "",
         }
-        raw_result = self.answerer.answer(paper, state["query"])
+        raw_result = self.answerer.answer(
+            paper,
+            str(state.get("research_question") or state["query"]),
+        )
         result = (
             raw_result
             if isinstance(raw_result, dict)

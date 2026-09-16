@@ -9,7 +9,7 @@ SRC_ROOT = Path(__file__).resolve().parents[1] / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from orchestration.adapters import KeywordNode
+from orchestration.adapters import ArxivSearchNode, KeywordNode
 from orchestration.evaluation import (
     citation_precision,
     reciprocal_rank,
@@ -162,6 +162,11 @@ class StateGraphTest(unittest.TestCase):
         self.assertEqual(len(result["selected_papers"]), 5)
         self.assertEqual(result["download_paper_ids"], [f"paper-{index}" for index in range(1, 6)])
         self.assertEqual(result["paper_ids"], ["paper-1"])
+        self.assertTrue(result["prioritize_primary_keyword"])
+        self.assertEqual(
+            result["research_question"],
+            "선택된 최상위 논문의 연구 목적, 방법론, 핵심 결과를 본문 근거로 설명해줘.",
+        )
         self.assertEqual(result["errors"], [])
 
     def test_selected_downloaded_paper_extracts_without_other_stages(self):
@@ -255,6 +260,43 @@ class StateGraphTest(unittest.TestCase):
         self.assertEqual(result["keywords"], ["alternative RAG"])
         self.assertIn("retrieval augmented generation", prompts[0])
         self.assertIn("겹치지 않는 대체 학술 용어", prompts[0])
+
+    def test_ranked_composite_search_uses_only_primary_keyword(self):
+        class FakeSearchBot:
+            def __init__(self):
+                self.query = ""
+
+            def search_papers(self, query, *, sort_by, max_results):
+                self.query = query
+                self.assertEqual(sort_by, "r")
+                self.assertEqual(max_results, 10)
+                return PAPERS[:10]
+
+            def save_papers(self, papers, *, extract_content=True):
+                self.assertEqual(len(papers), 5)
+                self.assertFalse(extract_content)
+
+            def assertEqual(self, left, right):
+                if left != right:
+                    raise AssertionError(f"{left!r} != {right!r}")
+
+            def assertFalse(self, value):
+                if value:
+                    raise AssertionError("expected False")
+
+        bot = FakeSearchBot()
+        node = ArxivSearchNode(factory=lambda: bot)
+        node(
+            {
+                "query": "LLM 관련 논문 10개 찾고 그 중 5개 저장하고 최상위 논문 1개 설명해줘",
+                "keywords": ["Large Language Models", "Natural Language Processing"],
+                "search_result_limit": 10,
+                "save_paper_count": 5,
+                "explain_paper_rank": 1,
+                "prioritize_primary_keyword": True,
+            }
+        )
+        self.assertEqual(bot.query, '"Large Language Models"')
 
 
 class EvaluatorTest(unittest.TestCase):

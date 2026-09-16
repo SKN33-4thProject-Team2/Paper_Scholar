@@ -64,6 +64,8 @@ class WorkflowState(TypedDict, total=False):
     search_result_limit: int
     save_paper_count: int
     explain_paper_rank: int
+    prioritize_primary_keyword: bool
+    research_question: str
     paper_ids: list[str]
     download_paper_ids: list[str]
     deep_search_paper_id: str
@@ -113,6 +115,8 @@ def initial_state(
         "search_result_limit": 0,
         "save_paper_count": 0,
         "explain_paper_rank": 0,
+        "prioritize_primary_keyword": False,
+        "research_question": "",
         "paper_ids": list(paper_ids or []),
         "download_paper_ids": [],
         "deep_search_paper_id": "",

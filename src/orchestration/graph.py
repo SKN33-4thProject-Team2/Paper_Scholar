@@ -247,6 +247,8 @@ def build_graph(
         routed["search_result_limit"] = decision.search_result_limit
         routed["save_paper_count"] = decision.save_paper_count
         routed["explain_paper_rank"] = decision.explain_paper_rank
+        routed["prioritize_primary_keyword"] = decision.prioritize_primary_keyword
+        routed["research_question"] = decision.research_question
         return routed
 
     def finish(state: WorkflowState) -> dict[str, Any]:

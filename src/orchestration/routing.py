@@ -38,6 +38,8 @@ class SupervisorDecision(BaseModel):
     search_result_limit: int = Field(default=0, ge=0, le=15)
     save_paper_count: int = Field(default=0, ge=0, le=15)
     explain_paper_rank: int = Field(default=0, ge=0, le=15)
+    prioritize_primary_keyword: bool = False
+    research_question: str = ""
     human_question: str = ""
 
 
@@ -280,6 +282,11 @@ class SupervisorRouter:
                 search_result_limit=search_limit,
                 save_paper_count=save_count,
                 explain_paper_rank=1,
+                prioritize_primary_keyword=True,
+                research_question=(
+                    "선택된 최상위 논문의 연구 목적, 방법론, "
+                    "핵심 결과를 본문 근거로 설명해줘."
+                ),
             )
 
         def candidate_id(number: int) -> str:
