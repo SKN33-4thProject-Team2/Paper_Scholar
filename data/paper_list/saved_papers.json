@@ -1,4 +1,152 @@
 {
+    "1910.13796": {
+        "id": "1910.13796",
+        "title": "Deep Learning vs. Traditional Computer Vision"
+    },
+    "2107.03436": {
+        "id": "2107.03436",
+        "title": "Tensor Methods in Computer Vision and Deep Learning"
+    },
+    "2412.03073": {
+        "id": "2412.03073",
+        "title": "Deep Learning based Computer-vision for Enhanced Beamforming"
+    },
+    "2305.06611": {
+        "id": "2305.06611",
+        "title": "Hyperbolic Deep Learning in Computer Vision: A Survey"
+    },
+    "1708.08169": {
+        "id": "1708.08169",
+        "title": "ChainerCV: a Library for Deep Learning in Computer Vision"
+    },
+    "2407.13193": {
+        "id": "2407.13193",
+        "title": "Retrieval-Augmented Generation for Natural Language Processing: A Survey"
+    },
+    "1511.03012": {
+        "id": "1511.03012",
+        "title": "Information retrieval in folktales using natural language processing"
+    },
+    "2409.18575": {
+        "id": "2409.18575",
+        "title": "Corpus-informed Retrieval Augmented Generation of Clarifying Questions"
+    },
+    "2505.02199": {
+        "id": "2505.02199",
+        "title": "Exploring new Approaches for Information Retrieval through Natural Language Processing"
+    },
+    "2509.21325": {
+        "id": "2509.21325",
+        "title": "PIR-RAG: A System for Private Information Retrieval in Retrieval-Augmented Generation"
+    },
+    "2502.18536": {
+        "id": "2502.18536",
+        "title": "FilterRAG: Zero-Shot Informed Retrieval-Augmented Generation to Mitigate Hallucinations in VQA"
+    },
+    "2402.17467": {
+        "id": "2402.17467",
+        "title": "Natural Language Processing Methods for Symbolic Music Generation and Information Retrieval: a Survey"
+    },
+    "2305.06983": {
+        "id": "2305.06983",
+        "title": "Active Retrieval Augmented Generation"
+    },
+    "2412.15246": {
+        "id": "2412.15246",
+        "title": "Accelerating Retrieval-Augmented Generation"
+    },
+    "2204.12309": {
+        "id": "2204.12309",
+        "title": "Information Retrieval in Friction Stir Welding of Aluminum Alloys by using Natural Language Processing based Algorithms"
+    },
+    "2305.18901": {
+        "id": "2305.18901",
+        "title": "Policy Optimization for Continuous Reinforcement Learning"
+    },
+    "1910.12156": {
+        "id": "1910.12156",
+        "title": "Convergent Policy Optimization for Safe Reinforcement Learning"
+    },
+    "2212.07536": {
+        "id": "2212.07536",
+        "title": "Robust Policy Optimization in Deep Reinforcement Learning"
+    },
+    "2304.14533": {
+        "id": "2304.14533",
+        "title": "Adversarial Policy Optimization in Deep Reinforcement Learning"
+    },
+    "2102.08201": {
+        "id": "2102.08201",
+        "title": "Improper Reinforcement Learning with Gradient-based Policy Optimization"
+    },
+    "2201.11463": {
+        "id": "2201.11463",
+        "title": "Quantile-Based Policy Optimization for Reinforcement Learning"
+    },
+    "1912.01557": {
+        "id": "1912.01557",
+        "title": "Policy Optimization Reinforcement Learning with Entropy Regularization"
+    },
+    "2111.13978": {
+        "id": "2111.13978",
+        "title": "Deep Q-Learning based Reinforcement Learning Approach for Network Intrusion Detection"
+    },
+    "2202.06239": {
+        "id": "2202.06239",
+        "title": "Supported Policy Optimization for Offline Reinforcement Learning"
+    },
+    "1809.05214": {
+        "id": "1809.05214",
+        "title": "Model-Based Reinforcement Learning via Meta-Policy Optimization"
+    },
+    "2310.10930": {
+        "id": "2310.10930",
+        "title": "Enhanced Transformer Architecture for Natural Language Processing"
+    },
+    "2307.13693": {
+        "id": "2307.13693",
+        "title": "Evaluating Large Language Models for Radiology Natural Language Processing"
+    },
+    "2511.02108": {
+        "id": "2511.02108",
+        "title": "Metamorphic Testing of Large Language Models for Natural Language Processing"
+    },
+    "2401.01262": {
+        "id": "2401.01262",
+        "title": "Fairness Certification for Natural Language Processing and Large Language Models"
+    },
+    "2405.18741": {
+        "id": "2405.18741",
+        "title": "Genshin: General Shield for Natural Language Processing with Large Language Models"
+    },
+    "2509.04534": {
+        "id": "2509.04534",
+        "title": "Quantized Large Language Models in Biomedical Natural Language Processing: Evaluation and Recommendation"
+    },
+    "2305.16326": {
+        "id": "2305.16326",
+        "title": "Benchmarking large language models for biomedical natural language processing applications and recommendations"
+    },
+    "2310.19975": {
+        "id": "2310.19975",
+        "title": "BioInstruct: Instruction Tuning of Large Language Models for Biomedical Natural Language Processing"
+    },
+    "2607.12195": {
+        "id": "2607.12195",
+        "title": "Comparing Semantic Navigation in Humans and Large Language Models using Natural Language Processing"
+    },
+    "2411.02730": {
+        "id": "2411.02730",
+        "title": "A Natural Language Processing Approach to Support Biomedical Data Harmonization: Leveraging Large Language Models"
+    },
+    "2403.00807": {
+        "id": "2403.00807",
+        "title": "Enhancing Cloud-Based Large Language Model Processing with Elasticsearch and Transformer Models"
+    },
+    "2311.16093": {
+        "id": "2311.16093",
+        "title": "Visual cognition in multimodal large language models"
+    },
     "2511.13780v1": {
         "id": "2511.13780v1",
         "title": "Self-Attention as Distributional Projection: A Unified Interpretation of Transformer Architecture"
