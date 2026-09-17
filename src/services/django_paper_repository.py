@@ -171,3 +171,51 @@ def replace_paper_sections(
         PaperSection.objects.bulk_create(section_rows)
 
     return len(section_rows)
+
+
+def replace_many_paper_sections(
+    sections_by_paper: Mapping[
+        str,
+        Iterable[tuple[int, str, str, str]],
+    ],
+) -> tuple[int, int, list[str]]:
+    """여러 논문의 MySQL 섹션을 한 트랜잭션에서 일괄 교체합니다."""
+    normalized_sections = {
+        normalize_arxiv_id(paper_id): list(sections)
+        for paper_id, sections in sections_by_paper.items()
+        if normalize_arxiv_id(paper_id)
+    }
+    papers_by_id = Paper.objects.in_bulk(
+        normalized_sections.keys(),
+        field_name="arxiv_id",
+    )
+    missing_ids = [
+        paper_id
+        for paper_id in normalized_sections
+        if paper_id not in papers_by_id
+    ]
+
+    section_rows = []
+    for paper_id, sections in normalized_sections.items():
+        paper = papers_by_id.get(paper_id)
+        if paper is None:
+            continue
+        section_rows.extend(
+            PaperSection(
+                paper=paper,
+                section_order=order,
+                section_title=title or "",
+                section_text=text or "",
+                section_html=html or "",
+            )
+            for order, title, text, html in sections
+        )
+
+    synced_paper_ids = list(papers_by_id)
+    with transaction.atomic():
+        PaperSection.objects.filter(
+            paper__arxiv_id__in=synced_paper_ids
+        ).delete()
+        PaperSection.objects.bulk_create(section_rows, batch_size=100)
+
+    return len(synced_paper_ids), len(section_rows), missing_ids
