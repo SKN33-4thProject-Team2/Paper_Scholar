@@ -21,10 +21,23 @@ langchain
 langchain-community
 langchain-core
 langchain-openai
+langchain-chroma
+langgraph
+langsmith
 chromadb
+
+# 논문 검색 및 본문 추출
+arxiv
+beautifulsoup4
+PyMuPDF
 
 # 유틸리티 & 환경 설정
 requests
 python-dotenv
 pydantic
+PyYAML
 urllib3
+
+# 평가 도구
+ragas
+deepeval
