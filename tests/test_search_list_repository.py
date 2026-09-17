@@ -30,6 +30,7 @@ class LocalLibraryRepositoryTest(unittest.TestCase):
                 {
                     "local-1": {"title": "Local Attention Paper"},
                     "shared-1": {"title": "Shared Paper"},
+                    "2410.22997v2": {"title": "Versioned Legacy Paper"},
                 }
             ),
             encoding="utf-8",
@@ -87,7 +88,7 @@ class LocalLibraryRepositoryTest(unittest.TestCase):
 
     def test_all_ids_merge_mysql_and_local_without_duplicates(self):
         repository = self.repository_module(
-            list_paper_ids=lambda: ["mysql-1", "shared-1"]
+            list_paper_ids=lambda: ["mysql-1", "2410.22997"]
         )
         with patch.dict(
             sys.modules,
@@ -95,7 +96,10 @@ class LocalLibraryRepositoryTest(unittest.TestCase):
         ):
             result = search_list.LocalLibraryBot().get_all_json_ids()
 
-        self.assertEqual(result, ["mysql-1", "shared-1", "local-1"])
+        self.assertEqual(
+            result,
+            ["mysql-1", "2410.22997", "local-1", "shared-1"],
+        )
 
     def test_search_ids_merge_mysql_and_matching_local_titles(self):
         repository = self.repository_module(

@@ -4,6 +4,7 @@ import sys
 import json
 import sqlite3
 import requests
+import re
 from typing import List, Optional
 from pathlib import Path
 from dotenv import load_dotenv
@@ -95,7 +96,7 @@ class LocalLibraryBot:
             pass
 
         local_ids = list(self._load_local_json().keys())
-        return list(dict.fromkeys([*mysql_ids, *local_ids]))
+        return self._merge_paper_ids(mysql_ids, local_ids)
 
     def search_json(self, query: str) -> List[str]:
         mysql_ids = []
@@ -113,7 +114,7 @@ class LocalLibraryBot:
             title = str(pdata.get("title", "")).casefold()
             if all(kw in title for kw in keywords if len(kw) > 1):
                 matched_ids.append(pid)
-        return list(dict.fromkeys([*mysql_ids, *matched_ids]))
+        return self._merge_paper_ids(mysql_ids, matched_ids)
 
     def fetch_full_data_from_db(self, paper_ids: List[str]) -> List[dict]:
         if not paper_ids:
@@ -149,6 +150,19 @@ class LocalLibraryBot:
                 return json.load(file)
             except json.JSONDecodeError:
                 return {}
+
+    @staticmethod
+    def _merge_paper_ids(primary_ids: List[str], fallback_ids: List[str]) -> List[str]:
+        """MySQL ID를 우선하며 버전만 다른 로컬 ID의 중복을 제거합니다."""
+        merged_ids = []
+        seen_ids = set()
+        for paper_id in [*primary_ids, *fallback_ids]:
+            canonical_id = re.sub(r"v\d+$", "", str(paper_id).strip())
+            if not canonical_id or canonical_id in seen_ids:
+                continue
+            merged_ids.append(str(paper_id).strip())
+            seen_ids.add(canonical_id)
+        return merged_ids
 
     @staticmethod
     def _fetch_local_papers(paper_ids: List[str]) -> dict[str, dict]:

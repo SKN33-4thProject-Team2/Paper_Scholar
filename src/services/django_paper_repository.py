@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sys
 from collections.abc import Iterable, Mapping
 from pathlib import Path
@@ -29,6 +30,11 @@ from django.db import transaction
 from scholar.models import Paper
 
 
+def normalize_arxiv_id(value: Any) -> str:
+    """버전 접미사를 제거한 표준 arXiv ID를 반환합니다."""
+    return re.sub(r"v\d+$", "", str(value or "").strip())
+
+
 def _normalize_authors(value: Any) -> list[str]:
     """검색 결과의 저자 정보를 JSONField에 저장할 리스트로 변환합니다."""
     if isinstance(value, list):
@@ -53,11 +59,11 @@ def upsert_papers(
 
     with transaction.atomic():
         for paper_data in papers:
-            arxiv_id = str(
+            arxiv_id = normalize_arxiv_id(
                 paper_data.get("arxiv_id")
                 or paper_data.get("id")
                 or ""
-            ).strip()
+            )
 
             if not arxiv_id:
                 continue
@@ -117,9 +123,9 @@ def search_paper_ids(query: str) -> list[str]:
 def get_papers_by_ids(paper_ids: Iterable[str]) -> list[dict[str, Any]]:
     """요청받은 ID 순서대로 MySQL 논문 메타데이터를 반환합니다."""
     ordered_ids = [
-        str(paper_id).strip()
+        normalize_arxiv_id(paper_id)
         for paper_id in paper_ids
-        if str(paper_id).strip()
+        if normalize_arxiv_id(paper_id)
     ]
     if not ordered_ids:
         return []
