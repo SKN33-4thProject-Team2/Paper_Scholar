@@ -10,13 +10,45 @@
 
 백엔드의 `/` 경로는 화면이 아니므로 404가 정상입니다. 연결 확인에는 `GET /api/health/`를 사용합니다.
 
+## 인증과 개인 서재
+
+상태 확인과 회원가입·토큰 발급·토큰 갱신을 제외한 API는 JWT 인증이 필요합니다.
+
+| Method | Path | 설명 |
+| --- | --- | --- |
+| POST | `/api/auth/register/` | 회원가입 |
+| POST | `/api/auth/token/` | 액세스·리프레시 토큰 발급 |
+| POST | `/api/auth/token/refresh/` | 액세스 토큰 갱신 |
+| GET | `/api/auth/me/` | 현재 로그인 사용자 조회 |
+
+회원가입 요청:
+
+```json
+{
+  "username": "paper-reader",
+  "email": "reader@example.com",
+  "password": "StrongPass!2468",
+  "password_confirm": "StrongPass!2468"
+}
+```
+
+로그인 요청은 `username`과 `password`를 보내며, 응답의 `access`와 `refresh` 토큰을 보관합니다. 인증 API 호출에는 다음 헤더를 사용합니다.
+
+```http
+Authorization: Bearer <access-token>
+```
+
+액세스 토큰은 30분, 리프레시 토큰은 7일 동안 유효합니다. React 클라이언트는 401 응답을 받으면 리프레시 토큰으로 액세스 토큰을 한 번 갱신한 뒤 원래 요청을 재시도합니다.
+
+`Paper`, 본문 섹션, 요약, 번역은 같은 arXiv 논문을 중복 처리하지 않도록 공용 데이터로 저장합니다. 사용자의 소유 관계는 `LibraryEntry(user, paper)`로 별도 관리합니다. 따라서 각 사용자는 본인이 저장한 논문만 목록·상세·본문·요약·번역·RAG 화면에서 볼 수 있고, 같은 논문을 저장한 사용자끼리는 이미 생성된 산출물을 재사용합니다.
+
 ## 조회 및 검색
 
 | Method | Path | 설명 |
 | --- | --- | --- |
 | GET | `/api/health/` | API 상태 확인 |
 | POST | `/api/search/` | arXiv 제목 검색 |
-| GET | `/api/papers/` | MySQL 논문 목록 |
+| GET | `/api/papers/` | 로그인 사용자의 서재 논문 목록 |
 | GET | `/api/papers/{arxiv_id}/` | 논문 상세와 산출물 개수 |
 | GET | `/api/papers/{arxiv_id}/sections/` | 본문 섹션 목록 |
 | GET | `/api/papers/{arxiv_id}/summary/` | 최종 요약 조회 |
@@ -112,6 +144,7 @@ RAG는 선택한 논문의 Chroma 본문 청크를 우선 검색하고, 사용�
 ```
 
 - 400: 요청값 검증 실패
+- 401: 인증 정보가 없거나 토큰이 만료됨
 - 404: 논문 또는 산출물 없음
 - 409: 선행 산출물이 없어 작업 불가
 - 500/502: 내부 처리 또는 외부 서비스 실패
