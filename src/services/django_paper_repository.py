@@ -92,3 +92,51 @@ def upsert_papers(
                 updated_count += 1
 
     return created_count, updated_count
+
+
+def list_paper_ids() -> list[str]:
+    """MySQL에 저장된 논문 ID를 기본 모델 정렬 순서로 반환합니다."""
+    return list(Paper.objects.values_list("arxiv_id", flat=True))
+
+
+def search_paper_ids(query: str) -> list[str]:
+    """제목에 모든 검색어가 포함된 MySQL 논문 ID를 반환합니다."""
+    keywords = [
+        keyword
+        for keyword in query.casefold().split()
+        if len(keyword) > 1
+    ]
+
+    queryset = Paper.objects.all()
+    for keyword in keywords:
+        queryset = queryset.filter(title__icontains=keyword)
+
+    return list(queryset.values_list("arxiv_id", flat=True))
+
+
+def get_papers_by_ids(paper_ids: Iterable[str]) -> list[dict[str, Any]]:
+    """요청받은 ID 순서대로 MySQL 논문 메타데이터를 반환합니다."""
+    ordered_ids = [
+        str(paper_id).strip()
+        for paper_id in paper_ids
+        if str(paper_id).strip()
+    ]
+    if not ordered_ids:
+        return []
+
+    papers_by_id = {
+        paper.arxiv_id: paper
+        for paper in Paper.objects.filter(arxiv_id__in=ordered_ids)
+    }
+
+    return [
+        {
+            "id": paper.arxiv_id,
+            "title": paper.title,
+            "authors": ", ".join(str(author) for author in paper.authors),
+            "summary": paper.abstract,
+            "pdf_url": paper.pdf_url,
+        }
+        for paper_id in ordered_ids
+        if (paper := papers_by_id.get(paper_id)) is not None
+    ]
