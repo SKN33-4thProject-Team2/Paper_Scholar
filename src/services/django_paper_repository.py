@@ -27,7 +27,7 @@ if not apps.ready:
 
 from django.db import transaction
 
-from scholar.models import Paper
+from scholar.models import Paper, PaperSection
 
 
 def normalize_arxiv_id(value: Any) -> str:
@@ -146,3 +146,28 @@ def get_papers_by_ids(paper_ids: Iterable[str]) -> list[dict[str, Any]]:
         for paper_id in ordered_ids
         if (paper := papers_by_id.get(paper_id)) is not None
     ]
+
+
+def replace_paper_sections(
+    paper_id: str,
+    sections: Iterable[tuple[int, str, str, str]],
+) -> int:
+    """논문의 기존 MySQL 섹션을 새 추출 결과로 원자적으로 교체합니다."""
+    arxiv_id = normalize_arxiv_id(paper_id)
+    paper = Paper.objects.get(arxiv_id=arxiv_id)
+    section_rows = [
+        PaperSection(
+            paper=paper,
+            section_order=order,
+            section_title=title or "",
+            section_text=text or "",
+            section_html=html or "",
+        )
+        for order, title, text, html in sections
+    ]
+
+    with transaction.atomic():
+        PaperSection.objects.filter(paper=paper).delete()
+        PaperSection.objects.bulk_create(section_rows)
+
+    return len(section_rows)
