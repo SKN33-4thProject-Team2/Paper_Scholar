@@ -19,6 +19,7 @@ from .serializers import (
     ArxivSearchResultSerializer,
     PaperDetailSerializer,
     PaperListSerializer,
+    PaperQuestionRequestSerializer,
     PaperSectionSerializer,
     PaperSaveRequestSerializer,
     PaperSummarizeRequestSerializer,
@@ -421,3 +422,34 @@ class PaperTranslateAPIView(APIView):
             },
             status=status.HTTP_202_ACCEPTED,
         )
+
+
+class PaperQuestionAPIView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request, arxiv_id: str):
+        request_serializer = PaperQuestionRequestSerializer(data=request.data)
+        request_serializer.is_valid(raise_exception=True)
+        paper = get_object_or_404(
+            Paper.objects.prefetch_related("sections", "translations"),
+            arxiv_id=arxiv_id,
+        )
+        if not paper.sections.exists():
+            return Response(
+                {"detail": "질문할 본문 섹션이 없습니다. 먼저 본문을 추출해 주세요."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        try:
+            from .services.rag_service import answer_paper_question
+
+            result = answer_paper_question(
+                paper,
+                request_serializer.validated_data["question"],
+            )
+        except Exception as exc:
+            return Response(
+                {"detail": f"논문 질의응답 중 오류가 발생했습니다: {exc}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+        return Response(result)

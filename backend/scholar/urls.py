@@ -4,6 +4,7 @@ from .views import (
     ArxivSearchAPIView,
     PaperDetailAPIView,
     PaperListAPIView,
+    PaperQuestionAPIView,
     PaperSaveAPIView,
     PaperSectionsAPIView,
     PaperSummaryAPIView,
@@ -56,5 +57,10 @@ urlpatterns = [
         "papers/<str:arxiv_id>/translate/",
         PaperTranslateAPIView.as_view(),
         name="paper-translate",
+    ),
+    path(
+        "papers/<str:arxiv_id>/ask/",
+        PaperQuestionAPIView.as_view(),
+        name="paper-question",
     ),
 ]

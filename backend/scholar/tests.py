@@ -824,3 +824,112 @@ class PaperTranslateAPITest(APITestCase):
 
         self.assertEqual(job.status, ProcessingJob.Status.FAILED)
         self.assertEqual(job.error_message, "translation failed")
+
+
+class PaperQuestionAPITest(APITestCase):
+    def setUp(self):
+        self.paper = Paper.objects.create(
+            arxiv_id="2603.00001",
+            title="RAG API paper",
+            authors=["Test Author"],
+            abstract="Paper abstract",
+        )
+        PaperSection.objects.create(
+            paper=self.paper,
+            section_order=1,
+            section_title="Method",
+            section_text="The paper uses retrieval augmented generation.",
+        )
+        self.url = reverse(
+            "scholar:paper-question",
+            kwargs={"arxiv_id": self.paper.arxiv_id},
+        )
+
+    @patch("scholar.services.rag_service.answer_paper_question")
+    def test_question_returns_answer_and_sources(self, answer_mock):
+        answer_mock.return_value = {
+            "arxiv_id": self.paper.arxiv_id,
+            "question": "어떤 방법을 사용했나요?",
+            "answer": "검색 증강 생성을 사용했습니다.",
+            "sources": [{"index": 1, "text": "Method evidence"}],
+            "model": "test-model",
+        }
+
+        response = self.client.post(
+            self.url,
+            {"question": "어떤 방법을 사용했나요?"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["answer"], "검색 증강 생성을 사용했습니다.")
+        self.assertEqual(response.data["sources"][0]["index"], 1)
+        answer_mock.assert_called_once()
+        called_paper, called_question = answer_mock.call_args.args
+        self.assertEqual(called_paper.id, self.paper.id)
+        self.assertEqual(called_question, "어떤 방법을 사용했나요?")
+
+    @patch("scholar.services.rag_service.answer_paper_question")
+    def test_question_validates_input_and_requires_sections(self, answer_mock):
+        invalid_response = self.client.post(
+            self.url,
+            {"question": " "},
+            format="json",
+        )
+        empty_paper = Paper.objects.create(
+            arxiv_id="2603.00002",
+            title="Empty RAG paper",
+            authors=[],
+        )
+        empty_response = self.client.post(
+            reverse(
+                "scholar:paper-question",
+                kwargs={"arxiv_id": empty_paper.arxiv_id},
+            ),
+            {"question": "이 논문은 무엇인가요?"},
+            format="json",
+        )
+
+        self.assertEqual(invalid_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertEqual(empty_response.status_code, status.HTTP_409_CONFLICT)
+        answer_mock.assert_not_called()
+
+    @patch("scholar.services.rag_service.answer_paper_question")
+    def test_question_reports_answer_service_failure(self, answer_mock):
+        answer_mock.side_effect = RuntimeError("model unavailable")
+
+        response = self.client.post(
+            self.url,
+            {"question": "핵심 결과는 무엇인가요?"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+        self.assertIn("model unavailable", response.data["detail"])
+
+    def test_rag_service_builds_mysql_context_and_normalizes_sources(self):
+        from .services.rag_service import answer_paper_question
+
+        class FakeAnswerer:
+            def __init__(self):
+                self.paper = None
+
+            def answer(self, paper, _question):
+                self.paper = paper
+                return {
+                    "answer": "Grounded answer",
+                    "sources": ["First source", "Second source"],
+                    "model": "fake-model",
+                }
+
+        answerer = FakeAnswerer()
+        result = answer_paper_question(
+            self.paper,
+            "What method is used?",
+            answerer=answerer,
+        )
+
+        self.assertEqual(answerer.paper["id"], self.paper.arxiv_id)
+        self.assertIn("retrieval augmented", answerer.paper["method"])
+        self.assertEqual(result["sources"][1]["index"], 2)
+        self.assertEqual(result["model"], "fake-model")

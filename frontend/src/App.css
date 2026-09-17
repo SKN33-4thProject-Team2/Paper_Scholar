@@ -52,6 +52,28 @@
 .artifact-actions span { color: var(--muted); font-size: 0.76rem; }
 .artifact-actions button { flex: 0 0 auto; padding: 10px 14px; border: 0; border-radius: 9px; color: #fff; font-weight: 800; background: var(--accent); cursor: pointer; }
 .artifact-actions button:disabled { cursor: not-allowed; opacity: 0.45; }
+.paper-chat { display: grid; gap: 16px; }
+.paper-chat__intro { display: grid; gap: 4px; padding: 16px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface-soft); }
+.paper-chat__intro strong { color: var(--ink); font-size: 0.9rem; }
+.paper-chat__intro span { color: var(--muted); font-size: 0.78rem; }
+.paper-chat__messages { display: grid; gap: 12px; max-height: 540px; overflow-y: auto; }
+.paper-chat__empty, .paper-chat__thinking { padding: 28px 18px; color: var(--muted); text-align: center; }
+.paper-chat__message { max-width: 88%; padding: 15px 17px; border-radius: 14px; }
+.paper-chat__message > span { display: block; margin-bottom: 7px; color: var(--muted); font-size: 0.7rem; font-weight: 800; }
+.paper-chat__message p { margin: 0; line-height: 1.7; white-space: pre-line; }
+.paper-chat__message small { display: block; margin-top: 9px; color: var(--muted); }
+.paper-chat__message--user { justify-self: end; color: #fff; background: var(--accent); }
+.paper-chat__message--user > span { color: rgba(255, 255, 255, 0.72); }
+.paper-chat__message--assistant { justify-self: start; border: 1px solid var(--border); background: var(--surface-soft); }
+.paper-chat__sources { margin-top: 12px; color: var(--muted); font-size: 0.78rem; }
+.paper-chat__sources summary { cursor: pointer; font-weight: 750; }
+.paper-chat__sources ol { display: grid; gap: 8px; margin-bottom: 0; padding-left: 20px; }
+.paper-chat__form { display: grid; grid-template-columns: 1fr auto; gap: 8px 12px; align-items: end; padding-top: 4px; }
+.paper-chat__form label { grid-column: 1 / -1; color: var(--muted); font-size: 0.76rem; font-weight: 800; }
+.paper-chat__form textarea { width: 100%; resize: vertical; padding: 12px 14px; border: 1px solid var(--border); border-radius: 10px; color: var(--ink); font: inherit; outline: none; background: var(--surface); }
+.paper-chat__form textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(24, 109, 85, 0.12); }
+.paper-chat__form button { min-height: 48px; padding: 0 18px; border: 0; border-radius: 10px; color: #fff; font-weight: 800; background: var(--accent); cursor: pointer; }
+.paper-chat__form button:disabled { cursor: not-allowed; opacity: 0.45; }
 .pagination { justify-content: flex-end; margin-top: 18px; }
 .pagination button:not(:disabled) { cursor: pointer; }
 .pagination button:disabled { opacity: 0.4; }
@@ -110,4 +132,6 @@
   .search-form__options button { grid-column: 1 / -1; }
   .selection-toolbar button { width: 100%; }
   .artifact-actions { align-items: stretch; flex-direction: column; }
+  .paper-chat__form { grid-template-columns: 1fr; }
+  .paper-chat__form button { width: 100%; }
 }

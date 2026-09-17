@@ -7,6 +7,7 @@ import {
   summarizePaper,
   translatePaper,
 } from './api'
+import PaperChat from './PaperChat'
 
 const EMPTY_ARTIFACTS = {
   paperId: null,
@@ -259,7 +260,7 @@ export default function PaperDetail({ paper, loading }) {
   const selectTab = async (tabId) => {
     setActiveTab(tabId)
     setArtifactError('')
-    const cachedArtifact = tabId === 'overview'
+    const cachedArtifact = tabId === 'overview' || tabId === 'chat'
       ? true
       : tabId === 'summary' && !paper.has_summary
         ? false
@@ -343,6 +344,7 @@ export default function PaperDetail({ paper, loading }) {
     { id: 'sections', label: `본문 섹션 ${paper.section_count}` },
     { id: 'summary', label: paper.has_summary ? '요약 완료' : '요약' },
     { id: 'translations', label: `번역 ${paper.translation_count}` },
+    { id: 'chat', label: '질의응답' },
   ]
 
   return (
@@ -400,6 +402,9 @@ export default function PaperDetail({ paper, loading }) {
             canTranslate={Boolean(paper.has_summary || paperArtifacts.summary)}
             onGenerate={generateTranslation}
           />
+        )}
+        {!artifactLoading && !artifactError && activeTab === 'chat' && (
+          <PaperChat key={paper.arxiv_id} paper={paper} />
         )}
       </div>
     </article>

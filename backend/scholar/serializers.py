@@ -130,6 +130,14 @@ class PaperTranslateRequestSerializer(serializers.Serializer):
     force = serializers.BooleanField(default=False)
 
 
+class PaperQuestionRequestSerializer(serializers.Serializer):
+    question = serializers.CharField(
+        min_length=2,
+        max_length=2000,
+        trim_whitespace=True,
+    )
+
+
 class ProcessingJobSerializer(serializers.ModelSerializer):
     arxiv_id = serializers.CharField(source="paper.arxiv_id", read_only=True)
 

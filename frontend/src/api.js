@@ -71,6 +71,14 @@ export function translatePaper(arxivId, targetLanguage = 'ko', force = false) {
   })
 }
 
+export function askPaper(arxivId, question) {
+  return request(`/papers/${encodeURIComponent(arxivId)}/ask/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ question }),
+  })
+}
+
 export function searchArxiv(params) {
   return request('/search/', {
     method: 'POST',
