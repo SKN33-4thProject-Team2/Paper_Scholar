@@ -452,6 +452,19 @@ class SummaryTool:
         except SummaryStoreError as exc:
             raise SummaryError(f"요약은 {summary.markdown_path}에 저장했지만 벡터 DB 저장에 실패했습니다. 상세 원인은 로그 파일을 확인해 주세요.") from exc
         try:
+            from services.django_paper_repository import upsert_paper_summary
+
+            _mysql_summary, mysql_created = upsert_paper_summary(
+                summary.id,
+                summary_text=summary_markdown,
+                model_name=summary.model,
+                section_count=len(summary.sections),
+            )
+            mysql_action = "신규" if mysql_created else "갱신"
+            self._progress(f"  [완료] MySQL 요약 {mysql_action} 저장")
+        except Exception as mysql_err:
+            self._progress(f"  [경고] MySQL 요약 동기화 실패: {mysql_err}")
+        try:
             self._checkpoint_store.delete(paper_id)
         except SummaryCheckpointError:
             pass

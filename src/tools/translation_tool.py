@@ -521,6 +521,22 @@ class TranslateTool:
             markdown=translated_markdown,
         )
 
+        try:
+            from services.django_paper_repository import upsert_translation
+
+            _mysql_translation, mysql_created = upsert_translation(
+                resolved_paper_id,
+                source_text=markdown,
+                translated_text=translated_markdown,
+                translation_type="full_text",
+                model_name=self._translate_service.model,
+                chunk_count=n_chunks,
+            )
+            mysql_action = "신규" if mysql_created else "갱신"
+            self._progress(f"  [완료] MySQL 전체 번역 {mysql_action} 저장")
+        except Exception as mysql_err:
+            self._progress(f"  [경고] MySQL 번역 동기화 실패: {mysql_err}")
+
         logger.log(
             LogCode.TRANSLATION_SUCCEEDED,
             paper_id=resolved_paper_id,

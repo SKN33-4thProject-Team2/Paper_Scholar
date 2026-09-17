@@ -106,6 +106,28 @@ class TranslateTool:
             updated_at TEXT NOT NULL
         )""")
 
+    def _sync_translation_to_mysql(
+        self,
+        paper_id: str,
+        source_text: str,
+        translated_text: str,
+        chunk_count: int,
+    ) -> None:
+        """SQLite 번역 저장을 유지하면서 요약 번역을 MySQL에도 동기화한다."""
+        try:
+            from services.django_paper_repository import upsert_translation
+
+            upsert_translation(
+                paper_id,
+                source_text=source_text,
+                translated_text=translated_text,
+                translation_type="summary",
+                model_name=str(getattr(self.translator, "model", "")),
+                chunk_count=chunk_count,
+            )
+        except Exception as exc:
+            print(f"[Warning] MySQL 요약 번역 동기화 실패: {exc}")
+
     def _read_summaries(self, paper_ids: list[str] | None = None) -> list[sqlite3.Row]:
         if not self.summary_db.is_file():
             raise FileNotFoundError(f"요약 DB를 찾을 수 없습니다: {self.summary_db}")
@@ -155,6 +177,7 @@ class TranslateTool:
         self.markdown_dir.mkdir(parents=True, exist_ok=True)
         now = datetime.now(timezone.utc).isoformat()
         outputs: list[Path] = []
+        mysql_sync_rows: list[tuple[str, str, str, int]] = []
         with sqlite3.connect(self.translate_db) as db:
             self._init_db(db)
             for row in rows:
@@ -171,10 +194,20 @@ class TranslateTool:
                     updated_at=excluded.updated_at""",
                     (row["paper_id"], row["title"] or row["paper_id"], source,
                      translated, chunk_count, now, now))
+                mysql_sync_rows.append(
+                    (str(row["paper_id"]), source, translated, chunk_count)
+                )
                 outputs.append(self.export_markdown(str(row["paper_id"]), db=db,
                                                     title=str(row["title"] or row["paper_id"]),
                                                     translated=str(translated)))
             db.commit()
+        for paper_id, source, translated, chunk_count in mysql_sync_rows:
+            self._sync_translation_to_mysql(
+                paper_id,
+                source,
+                translated,
+                chunk_count,
+            )
         return outputs
 
     # 기존 호출부와의 호환용 별칭

@@ -27,7 +27,7 @@ if not apps.ready:
 
 from django.db import transaction
 
-from scholar.models import Paper, PaperSection
+from scholar.models import Paper, PaperSection, PaperSummary, Translation
 
 
 def normalize_arxiv_id(value: Any) -> str:
@@ -219,3 +219,56 @@ def replace_many_paper_sections(
         PaperSection.objects.bulk_create(section_rows, batch_size=100)
 
     return len(synced_paper_ids), len(section_rows), missing_ids
+
+
+def upsert_paper_summary(
+    paper_id: str,
+    *,
+    summary_text: str,
+    model_name: str = "",
+    section_count: int = 0,
+    chunk_count: int = 0,
+) -> tuple[PaperSummary, bool]:
+    """논문의 최종 요약을 MySQL에 생성하거나 갱신합니다."""
+    paper = Paper.objects.get(arxiv_id=normalize_arxiv_id(paper_id))
+    return PaperSummary.objects.update_or_create(
+        paper=paper,
+        defaults={
+            "summary_text": summary_text,
+            "model_name": model_name,
+            "section_count": section_count,
+            "chunk_count": chunk_count,
+        },
+    )
+
+
+def upsert_translation(
+    paper_id: str,
+    *,
+    source_text: str,
+    translated_text: str,
+    translation_type: str = Translation.TranslationType.FULL_TEXT,
+    source_language: str = "en",
+    target_language: str = "ko",
+    model_name: str = "",
+    chunk_count: int = 0,
+) -> tuple[Translation, bool]:
+    """논문의 번역 결과를 유형과 대상 언어 기준으로 생성하거나 갱신합니다."""
+    paper = Paper.objects.get(arxiv_id=normalize_arxiv_id(paper_id))
+    summary = None
+    if translation_type == Translation.TranslationType.SUMMARY:
+        summary = PaperSummary.objects.get(paper=paper)
+
+    return Translation.objects.update_or_create(
+        paper=paper,
+        translation_type=translation_type,
+        target_language=target_language,
+        defaults={
+            "summary": summary,
+            "source_text": source_text,
+            "translated_text": translated_text,
+            "source_language": source_language,
+            "model_name": model_name,
+            "chunk_count": chunk_count,
+        },
+    )

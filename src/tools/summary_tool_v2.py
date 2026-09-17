@@ -305,6 +305,28 @@ class SummaryTool:
         self.generation_calls += 1
         return str(self.generator(prompt, **kwargs))
 
+    def _sync_summary_to_mysql(
+        self,
+        paper_id: str,
+        summary_text: str,
+        *,
+        section_count: int,
+        chunk_count: int,
+    ) -> None:
+        """MySQL 장애가 기존 SQLite 요약 저장을 막지 않도록 최선형으로 동기화한다."""
+        try:
+            from services.django_paper_repository import upsert_paper_summary
+
+            upsert_paper_summary(
+                paper_id,
+                summary_text=summary_text,
+                model_name=self.model,
+                section_count=section_count,
+                chunk_count=chunk_count,
+            )
+        except Exception as exc:
+            print(f"[Warning] MySQL 요약 동기화 실패: {exc}")
+
     def _read_paper(self, paper_id: str) -> tuple[str, str]:
         if not self.source_db.exists():
             raise FileNotFoundError(f"원문 DB를 찾을 수 없습니다: {self.source_db}")
@@ -510,6 +532,12 @@ class SummaryTool:
                        (paper_id, title, paper_summary, self.model, len(sections), len(final_chunks), now, now))
             db.execute("DELETE FROM paper_summary_chunk_temp WHERE paper_id = ?", (paper_id,))
             db.commit()
+        self._sync_summary_to_mysql(
+            paper_id,
+            paper_summary,
+            section_count=len(sections),
+            chunk_count=len(final_chunks),
+        )
         markdown = self._build_markdown(title, paper_summary)
         result = SummaryResult(paper_id, title, markdown, len(final_chunks), self.model)
         return result
@@ -549,6 +577,12 @@ class SummaryTool:
                 (paper_id, title, paper_summary, self.model, len(sections), 1, now, now),
             )
             db.commit()
+        self._sync_summary_to_mysql(
+            paper_id,
+            paper_summary,
+            section_count=len(sections),
+            chunk_count=1,
+        )
         result = SummaryResult(
             paper_id, title, self._build_markdown(title, paper_summary), 1, self.model
         )
