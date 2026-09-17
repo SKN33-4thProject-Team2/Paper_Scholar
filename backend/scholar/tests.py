@@ -18,6 +18,12 @@ class PaperAPITest(APITestCase):
         )
         PaperSection.objects.create(
             paper=cls.paper,
+            section_order=2,
+            section_title="Method",
+            section_text="Method body",
+        )
+        PaperSection.objects.create(
+            paper=cls.paper,
             section_order=1,
             section_title="Introduction",
             section_text="Section body",
@@ -37,15 +43,24 @@ class PaperAPITest(APITestCase):
             translated_text="논문 요약",
             target_language="ko",
         )
+        cls.empty_paper = Paper.objects.create(
+            arxiv_id="2401.00001",
+            title="Paper without artifacts",
+            authors=[],
+        )
 
     def test_list_papers_returns_paginated_mysql_shape(self):
         response = self.client.get(reverse("scholar:paper-list"))
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["count"], 1)
-        paper = response.data["results"][0]
+        self.assertEqual(response.data["count"], 2)
+        paper = next(
+            item
+            for item in response.data["results"]
+            if item["arxiv_id"] == self.paper.arxiv_id
+        )
         self.assertEqual(paper["arxiv_id"], "1702.01806")
-        self.assertEqual(paper["section_count"], 1)
+        self.assertEqual(paper["section_count"], 2)
         self.assertEqual(paper["translation_count"], 1)
         self.assertTrue(paper["has_summary"])
 
@@ -70,3 +85,79 @@ class PaperAPITest(APITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_sections_are_returned_in_section_order(self):
+        response = self.client.get(
+            reverse(
+                "scholar:paper-sections",
+                kwargs={"arxiv_id": self.paper.arxiv_id},
+            )
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            [section["section_order"] for section in response.data],
+            [1, 2],
+        )
+        self.assertEqual(response.data[0]["arxiv_id"], self.paper.arxiv_id)
+
+    def test_summary_returns_final_summary(self):
+        response = self.client.get(
+            reverse(
+                "scholar:paper-summary",
+                kwargs={"arxiv_id": self.paper.arxiv_id},
+            )
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["summary_text"], "Paper summary")
+        self.assertEqual(response.data["model_name"], "test-model")
+
+    def test_summary_returns_404_when_paper_has_no_summary(self):
+        response = self.client.get(
+            reverse(
+                "scholar:paper-summary",
+                kwargs={"arxiv_id": self.empty_paper.arxiv_id},
+            )
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_translations_include_type_and_language(self):
+        response = self.client.get(
+            reverse(
+                "scholar:paper-translations",
+                kwargs={"arxiv_id": self.paper.arxiv_id},
+            )
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["translation_type"], "summary")
+        self.assertEqual(response.data[0]["target_language"], "ko")
+        self.assertEqual(response.data[0]["translated_text"], "논문 요약")
+
+    def test_translations_can_be_filtered(self):
+        url = reverse(
+            "scholar:paper-translations",
+            kwargs={"arxiv_id": self.paper.arxiv_id},
+        )
+
+        response = self.client.get(
+            url,
+            {"type": "full_text", "target_language": "ko"},
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data, [])
+
+    def test_child_resources_return_404_for_unknown_paper(self):
+        for route_name in ("paper-sections", "paper-translations"):
+            with self.subTest(route_name=route_name):
+                response = self.client.get(
+                    reverse(
+                        f"scholar:{route_name}",
+                        kwargs={"arxiv_id": "9999.99999"},
+                    )
+                )
+                self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

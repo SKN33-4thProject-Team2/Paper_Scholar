@@ -1,8 +1,15 @@
 from django.db.models import Count, Exists, OuterRef
+from django.shortcuts import get_object_or_404
 from rest_framework.generics import ListAPIView, RetrieveAPIView
 
 from .models import Paper, PaperSummary
-from .serializers import PaperDetailSerializer, PaperListSerializer
+from .serializers import (
+    PaperDetailSerializer,
+    PaperListSerializer,
+    PaperSectionSerializer,
+    PaperSummarySerializer,
+    TranslationSerializer,
+)
 
 
 def paper_api_queryset():
@@ -33,3 +40,44 @@ class PaperDetailAPIView(RetrieveAPIView):
 
     def get_queryset(self):
         return paper_api_queryset()
+
+
+class PaperSectionsAPIView(ListAPIView):
+    serializer_class = PaperSectionSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        paper = get_object_or_404(
+            Paper.objects.prefetch_related("sections"),
+            arxiv_id=self.kwargs["arxiv_id"],
+        )
+        return paper.sections.all()
+
+
+class PaperSummaryAPIView(RetrieveAPIView):
+    serializer_class = PaperSummarySerializer
+
+    def get_object(self):
+        return get_object_or_404(
+            PaperSummary.objects.select_related("paper"),
+            paper__arxiv_id=self.kwargs["arxiv_id"],
+        )
+
+
+class PaperTranslationsAPIView(ListAPIView):
+    serializer_class = TranslationSerializer
+    pagination_class = None
+
+    def get_queryset(self):
+        paper = get_object_or_404(Paper, arxiv_id=self.kwargs["arxiv_id"])
+        queryset = paper.translations.select_related("paper")
+
+        translation_type = self.request.query_params.get("type")
+        if translation_type:
+            queryset = queryset.filter(translation_type=translation_type)
+
+        target_language = self.request.query_params.get("target_language")
+        if target_language:
+            queryset = queryset.filter(target_language=target_language)
+
+        return queryset
