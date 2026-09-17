@@ -74,16 +74,18 @@ class PaperAPITest(APITestCase):
         )
 
     def test_allowed_frontend_origin_receives_cors_header(self):
-        response = self.client.get(
-            reverse("scholar:health"),
-            HTTP_ORIGIN="http://localhost:5173",
-        )
+        for origin in ("http://localhost:5173", "http://127.0.0.1:5173"):
+            with self.subTest(origin=origin):
+                response = self.client.get(
+                    reverse("scholar:health"),
+                    HTTP_ORIGIN=origin,
+                )
 
-        self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(
-            response.headers["Access-Control-Allow-Origin"],
-            "http://localhost:5173",
-        )
+                self.assertEqual(response.status_code, status.HTTP_200_OK)
+                self.assertEqual(
+                    response.headers["Access-Control-Allow-Origin"],
+                    origin,
+                )
 
     def test_detail_accepts_arxiv_id_with_period(self):
         response = self.client.get(
