@@ -127,6 +127,25 @@ def get_papers_by_ids(paper_ids: Iterable[str]) -> list[dict[str, Any]]:
         for paper_id in paper_ids
         if normalize_arxiv_id(paper_id)
     ]
+    if not ordered_ids:
+        return []
+
+    papers_by_id = {
+        paper.arxiv_id: paper
+        for paper in Paper.objects.filter(arxiv_id__in=ordered_ids)
+    }
+
+    return [
+        {
+            "id": paper.arxiv_id,
+            "title": paper.title,
+            "authors": ", ".join(str(author) for author in paper.authors),
+            "summary": paper.abstract,
+            "pdf_url": paper.pdf_url,
+        }
+        for paper_id in ordered_ids
+        if (paper := papers_by_id.get(paper_id)) is not None
+    ]
 
 
 def list_papers_with_sections() -> list[tuple[str, str]]:
@@ -183,25 +202,6 @@ def get_paper_summaries(
             "summary_text": summary.summary_text,
         }
         for summary in summaries
-    ]
-    if not ordered_ids:
-        return []
-
-    papers_by_id = {
-        paper.arxiv_id: paper
-        for paper in Paper.objects.filter(arxiv_id__in=ordered_ids)
-    }
-
-    return [
-        {
-            "id": paper.arxiv_id,
-            "title": paper.title,
-            "authors": ", ".join(str(author) for author in paper.authors),
-            "summary": paper.abstract,
-            "pdf_url": paper.pdf_url,
-        }
-        for paper_id in ordered_ids
-        if (paper := papers_by_id.get(paper_id)) is not None
     ]
 
 

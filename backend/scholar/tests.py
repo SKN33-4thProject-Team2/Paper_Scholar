@@ -513,3 +513,45 @@ class PaperSaveAPITest(APITestCase):
         self.assertEqual(job.status, ProcessingJob.Status.FAILED)
         self.assertEqual(job.error_message, "extract failed")
         self.assertIsNotNone(job.completed_at)
+
+
+class DjangoPaperRepositoryTest(APITestCase):
+    @classmethod
+    def setUpTestData(cls):
+        Paper.objects.create(
+            arxiv_id="1706.03762",
+            title="Attention Is All You Need",
+            authors=["Ashish Vaswani", "Noam Shazeer"],
+            abstract="Transformer abstract",
+            pdf_url="https://arxiv.org/pdf/1706.03762",
+        )
+        Paper.objects.create(
+            arxiv_id="2410.22997",
+            title="Prompt Engineering for Service Robotics",
+            authors=["Jonas Bode"],
+            abstract="Robotics abstract",
+            pdf_url="https://arxiv.org/pdf/2410.22997",
+        )
+
+    def test_get_papers_by_ids_preserves_order_and_normalizes_versions(self):
+        from src.services.django_paper_repository import get_papers_by_ids
+
+        papers = get_papers_by_ids(
+            ["2410.22997v2", "missing-id", "1706.03762v7"]
+        )
+
+        self.assertEqual(
+            [paper["id"] for paper in papers],
+            ["2410.22997", "1706.03762"],
+        )
+        self.assertEqual(papers[1]["authors"], "Ashish Vaswani, Noam Shazeer")
+        self.assertEqual(papers[1]["summary"], "Transformer abstract")
+        self.assertEqual(
+            papers[1]["pdf_url"],
+            "https://arxiv.org/pdf/1706.03762",
+        )
+
+    def test_get_papers_by_ids_returns_empty_list_for_empty_input(self):
+        from src.services.django_paper_repository import get_papers_by_ids
+
+        self.assertEqual(get_papers_by_ids([]), [])
