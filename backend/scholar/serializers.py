@@ -1,6 +1,50 @@
+from django.contrib.auth import get_user_model
+from django.contrib.auth.password_validation import validate_password
 from rest_framework import serializers
 
 from .models import Paper, PaperSection, PaperSummary, ProcessingJob, Translation
+
+
+User = get_user_model()
+
+
+class UserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ("id", "username", "email", "date_joined")
+        read_only_fields = fields
+
+
+class RegisterSerializer(serializers.Serializer):
+    username = serializers.CharField(max_length=150)
+    email = serializers.EmailField()
+    password = serializers.CharField(write_only=True, min_length=8)
+    password_confirm = serializers.CharField(write_only=True, min_length=8)
+
+    def validate_username(self, value):
+        clean_value = value.strip()
+        if User.objects.filter(username__iexact=clean_value).exists():
+            raise serializers.ValidationError("이미 사용 중인 아이디입니다.")
+        return clean_value
+
+    def validate_email(self, value):
+        clean_value = value.strip().lower()
+        if User.objects.filter(email__iexact=clean_value).exists():
+            raise serializers.ValidationError("이미 사용 중인 이메일입니다.")
+        return clean_value
+
+    def validate(self, attrs):
+        if attrs["password"] != attrs["password_confirm"]:
+            raise serializers.ValidationError(
+                {"password_confirm": "비밀번호가 일치하지 않습니다."}
+            )
+        candidate = User(username=attrs["username"], email=attrs["email"])
+        validate_password(attrs["password"], user=candidate)
+        return attrs
+
+    def create(self, validated_data):
+        validated_data.pop("password_confirm")
+        return User.objects.create_user(**validated_data)
 
 
 class PaperListSerializer(serializers.ModelSerializer):

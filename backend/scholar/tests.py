@@ -1,3 +1,4 @@
+from django.contrib.auth import get_user_model
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -10,6 +11,85 @@ from .models import (
     ProcessingJob,
     Translation,
 )
+
+
+User = get_user_model()
+
+
+class AuthenticationAPITest(APITestCase):
+    def setUp(self):
+        self.registration = {
+            "username": "paper-reader",
+            "email": "reader@example.com",
+            "password": "StrongPass!2468",
+            "password_confirm": "StrongPass!2468",
+        }
+
+    def test_register_login_refresh_and_current_user(self):
+        register_response = self.client.post(
+            reverse("scholar:auth-register"),
+            self.registration,
+            format="json",
+        )
+        token_response = self.client.post(
+            reverse("scholar:auth-token"),
+            {
+                "username": self.registration["username"],
+                "password": self.registration["password"],
+            },
+            format="json",
+        )
+
+        self.client.credentials(
+            HTTP_AUTHORIZATION=f"Bearer {token_response.data['access']}"
+        )
+        me_response = self.client.get(reverse("scholar:auth-me"))
+        refresh_response = self.client.post(
+            reverse("scholar:auth-token-refresh"),
+            {"refresh": token_response.data["refresh"]},
+            format="json",
+        )
+
+        self.assertEqual(register_response.status_code, status.HTTP_201_CREATED)
+        self.assertNotIn("password", register_response.data)
+        self.assertEqual(token_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(me_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(me_response.data["username"], "paper-reader")
+        self.assertEqual(refresh_response.status_code, status.HTTP_200_OK)
+        self.assertIn("access", refresh_response.data)
+
+    def test_registration_rejects_duplicate_identity_and_password_mismatch(self):
+        self.client.post(
+            reverse("scholar:auth-register"),
+            self.registration,
+            format="json",
+        )
+        duplicate_response = self.client.post(
+            reverse("scholar:auth-register"),
+            self.registration,
+            format="json",
+        )
+        mismatch_response = self.client.post(
+            reverse("scholar:auth-register"),
+            {
+                **self.registration,
+                "username": "another-reader",
+                "email": "another@example.com",
+                "password_confirm": "DifferentPass!2468",
+            },
+            format="json",
+        )
+
+        self.assertEqual(duplicate_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("username", duplicate_response.data)
+        self.assertIn("email", duplicate_response.data)
+        self.assertEqual(mismatch_response.status_code, status.HTTP_400_BAD_REQUEST)
+        self.assertIn("password_confirm", mismatch_response.data)
+
+    def test_current_user_requires_authentication(self):
+        response = self.client.get(reverse("scholar:auth-me"))
+
+        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
 
 class PaperAPITest(APITestCase):
