@@ -49,6 +49,7 @@ class V2MySQLSyncTest(unittest.TestCase):
                 model="summary-test-model",
                 single_call=True,
             )
+            tool._read_mysql_sections = Mock(return_value=("", []))
             tool._sync_summary_to_mysql = Mock()
 
             result = tool.summarize("2401.00001v2")
@@ -90,6 +91,7 @@ class V2MySQLSyncTest(unittest.TestCase):
                 markdown_dir=markdown_dir,
                 translator=RecordingTranslator(),
             )
+            tool._read_mysql_summaries = Mock(return_value=[])
             tool._sync_translation_to_mysql = Mock()
 
             outputs = tool.translate_database()
@@ -101,6 +103,44 @@ class V2MySQLSyncTest(unittest.TestCase):
                 "번역: English summary",
                 2,
             )
+
+    def test_summary_reads_mysql_sections_without_local_db(self) -> None:
+        tool = SummaryTool(
+            source_db="missing.db",
+            summary_db="unused.db",
+            generator=lambda _prompt, **_kwargs: "unused",
+        )
+        tool._read_mysql_sections = Mock(
+            return_value=(
+                "MySQL 논문",
+                [(1, "Introduction", "본문"), (2, "References", "제외")],
+            )
+        )
+
+        title, sections = tool._read_sections("2401.00001v2")
+
+        self.assertEqual(title, "MySQL 논문")
+        self.assertEqual(sections, [(1, "Introduction", "본문")])
+
+    def test_translation_reads_mysql_summary_without_local_db(self) -> None:
+        tool = TranslateTool(
+            summary_db="missing.db",
+            translate_db="unused.db",
+            markdown_dir="unused",
+            translator=RecordingTranslator(),
+        )
+        mysql_rows = [
+            {
+                "paper_id": "2401.00001",
+                "title": "MySQL 논문",
+                "summary_text": "MySQL summary",
+            }
+        ]
+        tool._read_mysql_summaries = Mock(return_value=mysql_rows)
+
+        rows = tool._read_summaries(["2401.00001v2"])
+
+        self.assertEqual(rows, mysql_rows)
 
 
 if __name__ == "__main__":

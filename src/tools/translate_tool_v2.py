@@ -128,7 +128,18 @@ class TranslateTool:
         except Exception as exc:
             print(f"[Warning] MySQL 요약 번역 동기화 실패: {exc}")
 
-    def _read_summaries(self, paper_ids: list[str] | None = None) -> list[sqlite3.Row]:
+    @staticmethod
+    def _read_mysql_summaries(
+        paper_ids: list[str] | None = None,
+    ) -> list[dict[str, object]]:
+        from services.django_paper_repository import get_paper_summaries
+
+        return get_paper_summaries(paper_ids)
+
+    def _read_sqlite_summaries(
+        self,
+        paper_ids: list[str] | None = None,
+    ) -> list[dict[str, object]]:
         if not self.summary_db.is_file():
             raise FileNotFoundError(f"요약 DB를 찾을 수 없습니다: {self.summary_db}")
         with sqlite3.connect(self.summary_db) as db:
@@ -162,6 +173,43 @@ class TranslateTool:
                     {"paper_id": paper["paper_id"], "title": paper["title"], "summary_text": content}
                 )
             return result
+
+    def _read_summaries(
+        self,
+        paper_ids: list[str] | None = None,
+    ) -> list[dict[str, object]]:
+        """MySQL을 우선 조회하고 요청 ID의 누락분만 SQLite에서 보충한다."""
+        try:
+            mysql_rows = self._read_mysql_summaries(paper_ids)
+        except Exception:
+            mysql_rows = []
+
+        if not paper_ids:
+            return mysql_rows or self._read_sqlite_summaries()
+
+        normalize = lambda value: re.sub(r"v\d+$", "", str(value).strip())
+        rows_by_id = {
+            normalize(row["paper_id"]): row
+            for row in mysql_rows
+        }
+        missing_ids = [
+            paper_id
+            for paper_id in paper_ids
+            if normalize(paper_id) not in rows_by_id
+        ]
+        if missing_ids:
+            try:
+                sqlite_rows = self._read_sqlite_summaries(missing_ids)
+            except (FileNotFoundError, sqlite3.Error):
+                sqlite_rows = []
+            for row in sqlite_rows:
+                rows_by_id.setdefault(normalize(row["paper_id"]), row)
+
+        return [
+            rows_by_id[normalize(paper_id)]
+            for paper_id in paper_ids
+            if normalize(paper_id) in rows_by_id
+        ]
 
     @staticmethod
     def _safe_name(value: str) -> str:

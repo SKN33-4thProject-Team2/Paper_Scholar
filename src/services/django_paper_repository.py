@@ -127,6 +127,63 @@ def get_papers_by_ids(paper_ids: Iterable[str]) -> list[dict[str, Any]]:
         for paper_id in paper_ids
         if normalize_arxiv_id(paper_id)
     ]
+
+
+def list_papers_with_sections() -> list[tuple[str, str]]:
+    """본문 섹션이 저장된 MySQL 논문의 ID와 제목을 반환합니다."""
+    return list(
+        Paper.objects.filter(sections__isnull=False)
+        .distinct()
+        .values_list("arxiv_id", "title")
+    )
+
+
+def get_paper_sections(
+    paper_id: str,
+) -> tuple[str, list[tuple[int, str, str]]]:
+    """MySQL에서 논문 제목과 순서가 보존된 본문 섹션을 조회합니다."""
+    paper = Paper.objects.get(arxiv_id=normalize_arxiv_id(paper_id))
+    sections = list(
+        paper.sections.values_list(
+            "section_order",
+            "section_title",
+            "section_text",
+        )
+    )
+    return paper.title, sections
+
+
+def get_paper_summaries(
+    paper_ids: Iterable[str] | None = None,
+) -> list[dict[str, Any]]:
+    """MySQL 최종 요약을 요청 ID 순서 또는 최근 갱신 순서로 반환합니다."""
+    queryset = PaperSummary.objects.select_related("paper")
+    if paper_ids is None:
+        summaries = list(queryset)
+    else:
+        ordered_ids = [
+            normalize_arxiv_id(paper_id)
+            for paper_id in paper_ids
+            if normalize_arxiv_id(paper_id)
+        ]
+        summaries_by_id = {
+            summary.paper.arxiv_id: summary
+            for summary in queryset.filter(paper__arxiv_id__in=ordered_ids)
+        }
+        summaries = [
+            summaries_by_id[paper_id]
+            for paper_id in ordered_ids
+            if paper_id in summaries_by_id
+        ]
+
+    return [
+        {
+            "paper_id": summary.paper.arxiv_id,
+            "title": summary.paper.title,
+            "summary_text": summary.summary_text,
+        }
+        for summary in summaries
+    ]
     if not ordered_ids:
         return []
 
