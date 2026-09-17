@@ -6,12 +6,14 @@ from .views import (
     PaperSectionsAPIView,
     PaperSummaryAPIView,
     PaperTranslationsAPIView,
+    health_check,
 )
 
 
 app_name = "scholar"
 
 urlpatterns = [
+    path("health/", health_check, name="health"),
     path("papers/", PaperListAPIView.as_view(), name="paper-list"),
     path(
         "papers/<str:arxiv_id>/",

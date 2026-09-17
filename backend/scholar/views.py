@@ -1,6 +1,9 @@
 from django.db.models import Count, Exists, OuterRef
 from django.shortcuts import get_object_or_404
+from rest_framework.decorators import api_view, permission_classes
 from rest_framework.generics import ListAPIView, RetrieveAPIView
+from rest_framework.permissions import AllowAny
+from rest_framework.response import Response
 
 from .models import Paper, PaperSummary
 from .serializers import (
@@ -10,6 +13,17 @@ from .serializers import (
     PaperSummarySerializer,
     TranslationSerializer,
 )
+
+
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def health_check(_request):
+    return Response(
+        {
+            "status": "ok",
+            "service": "paper-scholar-api",
+        }
+    )
 
 
 def paper_api_queryset():

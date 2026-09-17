@@ -64,6 +64,27 @@ class PaperAPITest(APITestCase):
         self.assertEqual(paper["translation_count"], 1)
         self.assertTrue(paper["has_summary"])
 
+    def test_health_check_returns_service_status(self):
+        response = self.client.get(reverse("scholar:health"))
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.data,
+            {"status": "ok", "service": "paper-scholar-api"},
+        )
+
+    def test_allowed_frontend_origin_receives_cors_header(self):
+        response = self.client.get(
+            reverse("scholar:health"),
+            HTTP_ORIGIN="http://localhost:5173",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            response.headers["Access-Control-Allow-Origin"],
+            "http://localhost:5173",
+        )
+
     def test_detail_accepts_arxiv_id_with_period(self):
         response = self.client.get(
             reverse(
