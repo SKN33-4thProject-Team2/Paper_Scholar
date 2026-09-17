@@ -1,0 +1,48 @@
+.app-shell { width: min(1440px, 100%); margin: 0 auto; padding: 40px; }
+.app-header, .panel-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 24px; }
+.app-header { margin-bottom: 30px; }
+.app-header h1 { margin: 6px 0 8px; font-size: clamp(2.25rem, 5vw, 4.5rem); letter-spacing: -0.055em; }
+.app-header p, .paper-detail__authors { color: var(--muted); }
+.eyebrow { color: var(--accent); font-size: 0.75rem; font-weight: 800; letter-spacing: 0.16em; text-transform: uppercase; }
+.workspace { display: grid; grid-template-columns: minmax(360px, 0.9fr) minmax(0, 1.3fr); min-height: 680px; overflow: hidden; border: 1px solid var(--border); border-radius: 24px; background: var(--surface); box-shadow: var(--shadow); }
+.library-panel, .detail-panel { padding: 28px; }
+.library-panel { border-right: 1px solid var(--border); background: var(--surface-soft); }
+.panel-heading { align-items: end; margin-bottom: 20px; }
+.panel-heading h2, .paper-detail h2 { margin: 4px 0 0; color: var(--ink); }
+.paper-list { display: grid; gap: 12px; }
+.paper-card { display: grid; gap: 8px; width: 100%; padding: 18px; border: 1px solid var(--border); border-radius: 16px; color: inherit; text-align: left; background: var(--surface); cursor: pointer; transition: border-color 160ms ease, transform 160ms ease, box-shadow 160ms ease; }
+.paper-card:hover, .paper-card--selected { border-color: var(--accent); box-shadow: 0 12px 24px rgba(33, 64, 54, 0.08); transform: translateY(-1px); }
+.paper-card strong { color: var(--ink); font-size: 1rem; line-height: 1.35; }
+.paper-card__id, .paper-card__authors { overflow: hidden; color: var(--muted); font-size: 0.78rem; text-overflow: ellipsis; white-space: nowrap; }
+.paper-card__meta { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.status-badge { display: inline-flex; align-items: center; gap: 7px; width: fit-content; padding: 6px 10px; border-radius: 999px; font-size: 0.72rem; font-weight: 750; background: var(--neutral-soft); color: var(--muted); }
+.status-badge--success { background: var(--success-soft); color: var(--success); }
+.status-badge--danger { background: var(--danger-soft); color: var(--danger); }
+.status-dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+.paper-detail { display: grid; gap: 30px; }
+.paper-detail h2 { max-width: 900px; font-size: clamp(1.8rem, 3vw, 3rem); line-height: 1.1; letter-spacing: -0.035em; }
+.paper-detail__stats { display: grid; grid-template-columns: repeat(3, 1fr); gap: 1px; overflow: hidden; border: 1px solid var(--border); border-radius: 16px; background: var(--border); }
+.paper-detail__stats div { display: grid; gap: 4px; padding: 18px; background: var(--surface); }
+.paper-detail__stats strong { color: var(--ink); font-size: 1.35rem; }
+.paper-detail__stats span, .paper-detail h3 { color: var(--muted); font-size: 0.76rem; letter-spacing: 0.08em; text-transform: uppercase; }
+.paper-detail__abstract { max-height: 340px; overflow: auto; line-height: 1.75; white-space: pre-line; }
+.paper-detail__links, .pagination { display: flex; gap: 10px; }
+.paper-detail__links a, .pagination button { padding: 10px 14px; border: 1px solid var(--border); border-radius: 10px; color: var(--ink); font-weight: 750; text-decoration: none; background: var(--surface); }
+.pagination { justify-content: flex-end; margin-top: 18px; }
+.pagination button:not(:disabled) { cursor: pointer; }
+.pagination button:disabled { opacity: 0.4; }
+.empty-state { display: grid; min-height: 240px; place-items: center; color: var(--muted); text-align: center; }
+.detail-panel > .empty-state { min-height: 600px; }
+.error-banner { margin-bottom: 18px; padding: 14px 16px; border: 1px solid #f0b9b0; border-radius: 12px; color: var(--danger); background: var(--danger-soft); }
+
+@media (max-width: 900px) {
+  .app-shell { padding: 24px 16px; }
+  .workspace { grid-template-columns: 1fr; }
+  .library-panel { border-right: 0; border-bottom: 1px solid var(--border); }
+}
+
+@media (max-width: 560px) {
+  .app-header { align-items: flex-start; flex-direction: column; }
+  .library-panel, .detail-panel { padding: 20px; }
+  .paper-detail__stats { grid-template-columns: 1fr; }
+}
