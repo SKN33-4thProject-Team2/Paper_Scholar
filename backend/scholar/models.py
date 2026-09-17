@@ -122,6 +122,8 @@ class Translation(models.Model):
         PaperSummary,
         on_delete=models.CASCADE,
         related_name="translations",
+        null=True,
+        blank=True,
     )
     translation_type = models.CharField(
         max_length=20,
@@ -141,8 +143,8 @@ class Translation(models.Model):
         ordering = ["-updated_at"]
         constraints = [
             models.UniqueConstraint(
-                fields=["summary", "translation_type", "target_language"],
-                name="unique_summary_translation_language",
+                fields=["paper", "translation_type", "target_language"],
+                name="unique_paper_translation_language",
             )
         ]
 
