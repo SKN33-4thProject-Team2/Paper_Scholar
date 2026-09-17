@@ -1,7 +1,7 @@
 """번역 완료 논문을 선택하고 연속 질문하는 Deep Research 기능.
 
-실시간 토큰 스트리밍과 paper_sections 기반 고속 근거 검색을 지원하여
-터미널 체감 응답 대기 시간을 1초대로 단축한다.
+미추출 또는 벡터 미색인 논문 선택 시 실시간 자동 복구(Auto-Healing)를 수행하며,
+실시간 토큰 스트리밍과 서재 내 주제 필터링을 지원한다.
 """
 
 from __future__ import annotations
@@ -232,7 +232,7 @@ class PaperArtifactRepository:
         return ready, has_summary, translation_path, summary_path
 
     def _library_titles(self) -> dict[str, str]:
-        """paper_sections 에 제목 컬럼이 없어 서재 DB 에서 가져온다."""
+        """paper_sections에 제목 컬럼이 없어 서재 DB에서 가져온다."""
         db_to_use = self.library_db_path if self.library_db_path.exists() else DEFAULT_DB_PATH
         if not db_to_use.exists():
             return {}
@@ -246,33 +246,41 @@ class PaperArtifactRepository:
             return {}
 
     def list_translated_papers(self) -> list[dict[str, Any]]:
-        """paper_sections 에 절이 있는 논문만 목록에 올린다."""
-        connection = self._connect()
-        try:
-            rows = connection.execute(
-                """
-                SELECT paper_id, COUNT(*) AS section_count
-                FROM paper_sections
-                WHERE LOWER(section_title) NOT IN ('references', 'bibliography')
-                GROUP BY paper_id
-                ORDER BY paper_id
-                """
-            ).fetchall()
-        finally:
-            connection.close()
-
+        """서재 DB에 존재하는 전체 논문을 기본으로 목록을 구성하며, 추출 섹션 수를 함께 매핑한다."""
         titles = self._library_titles()
-        return [
-            {
-                "id": str(row["paper_id"]),
-                "title": titles.get(str(row["paper_id"]), str(row["paper_id"])),
-                "section_count": int(row["section_count"]),
-            }
-            for row in rows
-        ]
+        section_counts: dict[str, int] = {}
+
+        if self.extract_db_path.exists():
+            try:
+                connection = self._connect()
+                rows = connection.execute(
+                    """
+                    SELECT paper_id, COUNT(*) AS section_count
+                    FROM paper_sections
+                    WHERE LOWER(section_title) NOT IN ('references', 'bibliography')
+                    GROUP BY paper_id
+                    """
+                ).fetchall()
+                connection.close()
+                section_counts = {str(row["paper_id"]): int(row["section_count"]) for row in rows}
+            except Exception:
+                section_counts = {}
+
+        # 서재 DB의 모든 논문을 반환 (추출이 안 된 논문도 목록에 포함시켜 자동 복구가 가능하게 함)
+        papers = []
+        for pid, title in titles.items():
+            papers.append({
+                "id": pid,
+                "title": title,
+                "section_count": section_counts.get(pid, 0),
+            })
+        return papers
 
     def get_paper(self, paper_id: str) -> dict[str, Any] | None:
-        """선택한 논문의 본문을 paper_sections 의 절 및 산출물 파일에서 조립한다."""
+        """선택한 논문의 본문을 paper_sections의 절 및 산출물 파일에서 조립한다."""
+        if not self.extract_db_path.exists():
+            return None
+
         connection = self._connect()
         try:
             rows = connection.execute(
@@ -334,7 +342,7 @@ class PaperArtifactRepository:
         }
 
     def list_references(self, paper_id: str) -> list[dict[str, Any]]:
-        """paper_sections 의 References 절에서 인용 목록을 직접 파싱한다."""
+        """paper_sections의 References 절에서 인용 목록을 직접 파싱한다."""
         references: list[dict[str, Any]] = []
 
         try:
@@ -446,9 +454,8 @@ class KeywordPaperRetriever:
                 content = f"{content[:half]}\n...\n{content[-half:]}"
             evidence.append(f"[{label}]\n{content}")
 
-        # 개요 정보가 비어있을 경우 본문 상단 일부를 발췌
         if not evidence and paper.get("translation_text"):
-            evidence.append(f"[본문 시작부]\n{paper['translation_text'][:self.chunk_size]}")
+            evidence.append(f"[본문 발췌]\n{paper['translation_text'][:self.chunk_size]}")
         return evidence[: self.top_k]
 
     def _split(self, text: str) -> list[str]:
@@ -477,7 +484,6 @@ class KeywordPaperRetriever:
         chunks = self._split(context)
         question_keywords = self._keywords(question)
 
-        # "전체 설명", "요약" 등의 질문은 핵심 구조화 섹션(초록, 방법, 결과, 결론)을 즉각 반환
         if not question_keywords or any(w in question for w in ["전체", "요약", "설명"]):
             overview = self._overview_evidence(paper)
             if overview:
@@ -577,7 +583,7 @@ class ExtractivePaperAnswerer:
 
 
 class LangChainPaperAnswerer:
-    """실시간 스트리밍 출력을 지원하는 근거 기반 답변기."""
+    """실시간 토큰 스트리밍 출력을 지원하는 근거 기반 답변기."""
 
     SYSTEM_PROMPT = """당신은 학술 논문 Deep Research 도우미입니다.
 제공된 선택 논문의 내용만 근거로 한국어로 알기 쉽게 상세히 설명하세요.
@@ -616,7 +622,6 @@ class LangChainPaperAnswerer:
             or DEFAULT_OPENAI_MODEL
         )
 
-        # streaming=True 설정으로 첫 글자 지연을 1초 미만으로 단축
         try:
             model = ChatOpenAI(
                 model=selected_model,
@@ -656,7 +661,6 @@ class LangChainPaperAnswerer:
         print("\n[답변 내용]")
         collected_chunks = []
         try:
-            # 실시간 토큰 스트리밍 출력
             for chunk in self.model.stream(prompt):
                 text_piece = getattr(chunk, "content", str(chunk))
                 sys.stdout.write(text_piece)
@@ -665,7 +669,6 @@ class LangChainPaperAnswerer:
             print()
             full_answer = "".join(collected_chunks).strip()
         except Exception:
-            # 스트리밍 실패 시 일반 invoke 호출
             resp = self.model.invoke(prompt)
             full_answer = str(getattr(resp, "content", resp)).strip()
             print(full_answer)
@@ -679,7 +682,7 @@ class LangChainPaperAnswerer:
 
 
 class DeepResearchBot:
-    """논문 목록·주제 검색·선택 상태·후속 질의응답을 총괄 관리하는 챗봇 클래스."""
+    """논문 목록·주제 검색·선택 상태·자동 복구·후속 질의응답을 총괄 관리하는 챗봇 클래스."""
 
     BACK_COMMANDS = ("뒤로", "목록으로", "선택 취소", "처음으로", "전체 목록", "전체")
     POSITIVE_COMMANDS = ("네", "예", "응", "그래", "좋아", "검색해", "찾아줘", "진행")
@@ -723,6 +726,48 @@ class DeepResearchBot:
     def _result(status: str, message: str, **data: Any) -> dict[str, Any]:
         return {"status": status, "message": message, **data}
 
+    def _ensure_paper_artifacts(self, paper_id: str) -> bool:
+        """선택 논문의 SQLite 본문 섹션 및 Chroma 벡터 색인 누락 여부를 확인하고 즉시 자동 복구한다."""
+        clean_id = re.sub(r"v\d+$", "", paper_id.strip())
+
+        # 1. SQLite 본문 추출 적재 검사
+        has_sections = False
+        if DEFAULT_EXTRACT_DB_PATH.exists():
+            try:
+                with sqlite3.connect(DEFAULT_EXTRACT_DB_PATH) as conn:
+                    cnt = conn.execute(
+                        "SELECT COUNT(*) FROM paper_sections WHERE paper_id = ?",
+                        (clean_id,),
+                    ).fetchone()[0]
+                    has_sections = cnt > 0
+            except sqlite3.Error:
+                has_sections = False
+
+        if not has_sections:
+            print(f"\n[System] ⚠️ 논문 [{clean_id}]의 본문 섹션이 없습니다. 지금 즉시 추출 및 파싱을 시작합니다...")
+            try:
+                from tools.extractor_tool import extract_and_save
+                sec_count = extract_and_save(clean_id)
+                print(f"[System] ✅ 본문 추출 완료: {sec_count}개 섹션이 적재되었습니다.")
+            except Exception as e:
+                print(f"[System] ❌ 본문 자동 추출 실패 ({clean_id}): {e}")
+                return False
+
+        # 2. Chroma 벡터 색인 여부 검사 및 동기화
+        try:
+            from services.fulltext_vector_store import ChromaFullTextStore
+            store = ChromaFullTextStore()
+            collection = store._collection()
+            existing_chunks = len(collection.get(where={"paper_id": clean_id}).get("ids", []))
+            if existing_chunks == 0:
+                print(f"[System] ⚠️ 논문 [{clean_id}]의 Chroma 벡터 색인이 누락되어 있습니다. 즉시 임베딩을 동기화합니다...")
+                added = store.ensure_index(paper_id=clean_id)
+                print(f"[System] ✅ 벡터 색인 완료: {added}개 청크가 ChromaDB에 동기화되었습니다.")
+        except Exception as e:
+            print(f"[System] [Notice] Chroma 벡터 색인 점검 중 경고 (키워드 검색 자동 폴백): {e}")
+
+        return True
+
     def list_papers(self) -> dict[str, Any]:
         logger.log(LogCode.DEEP_RESEARCH_LIST_STARTED)
         papers = self.repository.list_translated_papers()
@@ -761,7 +806,6 @@ class DeepResearchBot:
 
         filtered: list[dict[str, Any]] = []
 
-        # 1. LLM 시맨틱 필터링
         if hasattr(self.answerer, "model"):
             try:
                 catalog = "\n".join([f"[{idx+1}] {p['title']}" for idx, p in enumerate(all_papers)])
@@ -781,7 +825,6 @@ class DeepResearchBot:
             except Exception:
                 filtered = []
 
-        # 2. 영문 문자열 매칭 폴백
         if not filtered:
             term_lower = topic_term.lower()
             synonyms = [term_lower]
@@ -819,7 +862,7 @@ class DeepResearchBot:
         )
 
     def select_paper(self, selection: str | int) -> dict[str, Any]:
-        """현재 화면에 표시된 목록(필터링 결과 또는 전체 목록)을 우선 기준으로 논문을 선택한다."""
+        """현재 화면의 표시 목록을 우선 기준으로 논문을 선택하고 자동 복구(Auto-Healing)를 수행한다."""
         pool = self.current_display_papers if self.current_display_papers else self.repository.list_translated_papers()
         if not pool:
             logger.log(LogCode.DEEP_RESEARCH_REQUEST_REJECTED, reason="no_papers")
@@ -888,6 +931,14 @@ class DeepResearchBot:
                 "논문을 찾지 못했습니다. 번호, 제목 또는 논문 ID로 선택해 주세요.",
             )
 
+        # [온디맨드 자동 복구 실행] 본문 미추출 또는 벡터 미색인 상태라면 즉시 복구 수행
+        ready = self._ensure_paper_artifacts(target["id"])
+        if not ready:
+            return self._result(
+                "extraction_failed",
+                f"선택한 논문 [{target['id']}]의 본문을 가져올 수 없습니다. 원문 HTML 상태를 확인해 주세요."
+            )
+
         paper = self.repository.get_paper(target["id"])
         if paper is None:
             logger.log(
@@ -899,6 +950,7 @@ class DeepResearchBot:
                 "not_found",
                 "선택한 논문의 추출 내용을 DB에서 불러오지 못했습니다.",
             )
+
         self.selected_paper = paper
         logger.log(
             LogCode.DEEP_RESEARCH_PAPER_SELECTED,
@@ -1144,7 +1196,7 @@ class DeepResearchBot:
         if not message:
             return self._result("invalid_input", "메시지를 입력해 주세요.")
 
-        # 1. 참고문헌 외부 검색 확인 응답 처리
+        # 1. 참고문헌 검색 승인/취소 응답 처리
         if self.pending_references:
             if any(command in message for command in self.NEGATIVE_COMMANDS):
                 self.pending_references = []
@@ -1155,11 +1207,11 @@ class DeepResearchBot:
             if any(command in message for command in self.POSITIVE_COMMANDS):
                 return self.search_related_papers()
 
-        # 2. 뒤로가기 / 선택 취소 처리
+        # 2. 뒤로가기 / 목록 리셋 처리
         if any(cmd == message or message.startswith(cmd) for cmd in self.BACK_COMMANDS):
             return self.reset_paper()
 
-        # 3. 전체 목록 보기
+        # 3. 순수 전체 목록 명령어
         clean_msg = re.sub(r"\s+", "", message)
         if clean_msg in {"목록", "리스트", "전체목록", "전체논문", "논문목록", "전체", "목록보여줘", "논문목록보여줘"}:
             return self.list_papers()
@@ -1175,12 +1227,10 @@ class DeepResearchBot:
             query_part = re.sub(r"^(?:선택|보기|보여줘|으로|할래)\s*", "", query_part).strip()
             query_part = re.sub(r"^(?:에\s*대해(?:서)?|[의은는이가])\s*", "", query_part).strip()
 
-            # 선택 수행
             select_res = self.select_paper(target_idx)
             if select_res.get("status") != "selected":
                 return select_res
 
-            # 질문이 결합되어 있다면 즉시 답변 수행
             if query_part:
                 return self.ask(query_part)
             return select_res
@@ -1188,7 +1238,7 @@ class DeepResearchBot:
         if pure_num_match:
             return self.select_paper(int(pure_num_match.group(1)))
 
-        # 5. 논문이 선택된 상태라면 RAG 질의응답 또는 참고문헌 탐색 수행
+        # 5. 논문이 선택된 상태에서의 질의응답 및 참고문헌 탐색
         if self.selected_paper is not None:
             related_request = any(
                 command in message for command in ("관련 논문", "비슷한 논문", "유사 논문", "참고문헌", "인용 논문")
@@ -1273,7 +1323,9 @@ def format_cli_response(response: dict[str, Any]) -> str:
             for p in papers:
                 num = p.get("number", "-")
                 title = p.get("title", "제목 없음")
-                lines.append(f"  [{num}번] {title}")
+                sec_cnt = p.get("section_count", 0)
+                sec_tag = f" ({sec_cnt}개 섹션)" if sec_cnt > 0 else " (선택 시 자동 추출)"
+                lines.append(f"  [{num}번] {title}{sec_tag}")
 
     if "paper" in response and isinstance(response["paper"], dict):
         paper_title = response["paper"].get("title", "제목 없음")
@@ -1287,7 +1339,6 @@ def format_cli_response(response: dict[str, Any]) -> str:
         if "model" in response:
             lines.append(f"🤖 답변 모델: {response['model']}")
 
-        # 스트리밍 시 이미 콘솔에 출력되었으므로 sources와 푸터만 출력
         if "sources" in response and response["sources"]:
             lines.append("\n🔍 [참고 근거]")
             for idx, src in enumerate(response["sources"], 1):
@@ -1314,14 +1365,12 @@ def format_cli_response(response: dict[str, Any]) -> str:
 
 
 def run_cli() -> None:
-    # 1. paper_sections 및 서재 DB 조립 레포지토리
     repository = PaperArtifactRepository(
         extract_db_path=DEFAULT_EXTRACT_DB_PATH,
         library_db_path=DEFAULT_DB_PATH,
         reference_db_path=DEFAULT_REFERENCE_DB_PATH,
     )
 
-    # 2. 고속 키워드/개요 인-메모리 검색기 (단일 논문 Q&A 최적화)
     retriever = KeywordPaperRetriever(top_k=4)
 
     search_agent = None
