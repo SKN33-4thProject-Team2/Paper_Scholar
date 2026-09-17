@@ -3,23 +3,17 @@
 from __future__ import annotations
 
 import sqlite3
-import sys
 import time
 from pathlib import Path
 from typing import Any, TypedDict
 
-# 파일을 직접 실행해도 프로젝트의 src 패키지를 찾을 수 있도록 경로를 준비한다.
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SRC_ROOT = PROJECT_ROOT / "src"
-if str(SRC_ROOT) not in sys.path:
-    sys.path.insert(0, str(SRC_ROOT))
+import sys
+_SRC_ROOT = Path(__file__).resolve().parents[1]
+if str(_SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SRC_ROOT))
+from agent import DEFAULT_DB_PATH, DEFAULT_MARKDOWN_DIR, DEFAULT_SUMMARY_DB_PATH, PROJECT_ROOT
 
 from tools.summary_tool_v2 import SummaryResult, SummaryTool
-
-DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "paper_extract" / "extracted_papers.db"
-
-DEFAULT_SUMMARY_DB_PATH = PROJECT_ROOT / "data" / "paper_summary" / "summary.db"
-DEFAULT_MARKDOWN_DIR = PROJECT_ROOT / "data" / "paper_summary"
 
 
 class SummaryState(TypedDict, total=False):
@@ -150,11 +144,17 @@ summary_node = SummaryAgent()
 
 if __name__ == "__main__":
     # data/paper_extract/extracted_papers.db 전체 논문을 처리하는 간단한 테스트 실행부
+    print("[요약] SummaryAgent 실행을 시작합니다.", flush=True)
+    print("[요약] 모델: qwen3:4b-instruct-2507-q4_K_M", flush=True)
+
+    paper_id = "2410.22997v2"
+    print("[요약] 대상 논문: ",paper_id, flush=True)
     agent = SummaryAgent(
         PROJECT_ROOT / "data" / "paper_extract" / "extracted_papers.db",
         provider="ollama",
     )
-    result = agent.run(paper_ids=["2410.22997v2"])
+    print("[요약] dense 핵심 문장 선별 및 전체 4단계 요약 중...", flush=True)
+    result = agent.run(paper_ids=[paper_id])
     print(f"요약 DB 저장 완료: {agent.summary_db_path}")
     print(f"전체 처리 시간: {result['elapsed_seconds']:.2f}초")
     print(f"전체 모델 호출 횟수: {result['generation_calls']}회")

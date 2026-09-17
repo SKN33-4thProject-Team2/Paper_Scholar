@@ -468,29 +468,37 @@ class SummaryTool:
             self._init_db(db)
             for section_order, section_title, section_text in sections:
                 protected = protect_markup(section_text)
-                # 정확도를 위해 TF-IDF로 문장을 버리지 않고 섹션 원문 전체를 사용한다.
-                # paragraph_chunks는 빈 줄과 문단 경계를 우선 보존하면서 긴 섹션만 나눈다.
+                # 긴 섹션은 문단 경계를 유지해 나눈 뒤, 각 청크에서 핵심 문장만 선별한다.
                 chunks = paragraph_chunks(protected.text, self.max_chars)
                 for index, chunk in enumerate(chunks, 1):
                     protection = protected_for_chunk(chunk, protected)
                     original_chunk = restore_markup(chunk, protection)
                     items = [protected.replacements[t] for t in _TOKEN.findall(chunk) if t in protected.replacements]
-                    prompt = f"{language_instruction(chunk)}\n{SUMMARY_PROMPT}\n논문 제목: {title}\n섹션: {section_title}\n청크 {index}/{len(chunks)}:\n{chunk}"
-                    result = self._generate(prompt, model=self.model, max_tokens=DEFAULT_CHUNK_MAX_TOKENS, temperature=DEFAULT_TEMPERATURE, timeout=DEFAULT_TIMEOUT)
-                    chunk_summary = self._restore_or_repair(str(result).strip(), protection)
+                    section_prompt = (
+                        f"{language_instruction(chunk)}\n{SUMMARY_PROMPT}\n"
+                        f"논문 제목: {title}\n섹션: {section_title}\n"
+                        f"청크 {index}/{len(chunks)}:\n{chunk}"
+                    )
+                    result = self._generate(
+                        section_prompt, model=self.model,
+                        max_tokens=DEFAULT_CHUNK_MAX_TOKENS,
+                        temperature=DEFAULT_TEMPERATURE, timeout=DEFAULT_TIMEOUT,
+                    )
+                    chunk_summary = self._restore_or_repair(
+                        str(result).strip(), protection
+                    )
                     final_chunks.append((section_order, index, section_title, original_chunk, chunk_summary, json.dumps(items, ensure_ascii=False)))
-                    chunk_inputs.append(f"[{section_title}]\n{chunk_summary}")
+                    chunk_inputs.append(f"[{section_title} · 섹션 요약]\n{chunk_summary}")
 
             combined = "\n\n".join(chunk_inputs)
             combined_protection = protect_markup(combined)
-            prompt = f"{language_instruction(combined)}\n{PAPER_PROMPT}\n논문 제목: {title}\n[청크별 요약]\n{combined_protection.text}"
+            prompt = f"{language_instruction(combined)}\n{PAPER_PROMPT}\n논문 제목: {title}\n[섹션별 요약]\n{combined_protection.text}"
             artifacts = [f"{token}: {combined_protection.replacements[token]}" for token in combined_protection.order]
             if artifacts:
                 prompt += "\n\n[표·수식 참고]\n" + "\n".join(artifacts)
-            # 최종 4단계 통합은 청크 요약보다 출력이 길어질 수 있으므로
-            # 설정값(1536)이 작아도 잘림을 피할 최소 여유를 둔다.
+            # 최종 4단계 요약은 불필요하게 긴 생성을 막고 설정값을 따른다.
             result = self._generate(
-                prompt, model=self.model, max_tokens=max(DEFAULT_MAX_TOKENS, 2048),
+                prompt, model=self.model, max_tokens=max(DEFAULT_MAX_TOKENS, 1536),
                 temperature=DEFAULT_TEMPERATURE, timeout=DEFAULT_TIMEOUT,
             )
             paper_summary = self._restore_or_repair(str(result).strip(), combined_protection)
