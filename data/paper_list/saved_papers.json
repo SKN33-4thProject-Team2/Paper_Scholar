@@ -1,4 +1,64 @@
 {
+    "1609.04747": {
+        "id": "1609.04747",
+        "title": "An overview of gradient descent optimization algorithms"
+    },
+    "1801.09324": {
+        "id": "1801.09324",
+        "title": "Strong error analysis for stochastic gradient descent optimization algorithms"
+    },
+    "2007.02723": {
+        "id": "2007.02723",
+        "title": "Weak error analysis for stochastic gradient descent optimization algorithms"
+    },
+    "1903.03614": {
+        "id": "1903.03614",
+        "title": "Gradient Descent based Optimization Algorithms for Deep Learning Models Training"
+    },
+    "2302.11898": {
+        "id": "2302.11898",
+        "title": "A gradient descent akin method for constrained optimization: algorithms and applications"
+    },
+    "2311.10203": {
+        "id": "2311.10203",
+        "title": "Adaptive Optimization Algorithms for Machine Learning"
+    },
+    "1909.10233": {
+        "id": "1909.10233",
+        "title": "Machine Learning Optimization Algorithms & Portfolio Allocation"
+    },
+    "2008.11370": {
+        "id": "2008.11370",
+        "title": "Gravilon: Applications of a New Gradient Descent Method to Machine Learning"
+    },
+    "1705.05491": {
+        "id": "1705.05491",
+        "title": "Distributed Statistical Machine Learning in Adversarial Settings: Byzantine Gradient Descent"
+    },
+    "2203.03366": {
+        "id": "2203.03366",
+        "title": "Improvements to Gradient Descent Methods for Quantum Tensor Network Machine Learning"
+    },
+    "1804.03928": {
+        "id": "1804.03928",
+        "title": "Deep Learning For Computer Vision Tasks: A review"
+    },
+    "1811.10847": {
+        "id": "1811.10847",
+        "title": "Algae Detection Using Computer Vision and Deep Learning"
+    },
+    "2010.06497": {
+        "id": "2010.06497",
+        "title": "Satellite Image Classification with Deep Learning"
+    },
+    "2308.13998": {
+        "id": "2308.13998",
+        "title": "Computation-efficient Deep Learning for Computer Vision: A Survey"
+    },
+    "2504.02860": {
+        "id": "2504.02860",
+        "title": "Computer Vision and Deep Learning for 4D Augmented Reality"
+    },
     "1910.13796": {
         "id": "1910.13796",
         "title": "Deep Learning vs. Traditional Computer Vision"

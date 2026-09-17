@@ -29,24 +29,28 @@ if str(SRC_DIR) not in sys.path:
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.append(str(PROJECT_ROOT))
 
-# 로거 모듈 임포트
+# 로거 모듈 임포트 (기존 5000번대 공식 규격 반영)
 try:
     from log.app_logger import AppLogger
     from log.log_codes import LogCode
 except ImportError:
     class LogCode:
-        PAPER_SEARCH_STARTED = "PAPER_SEARCH_STARTED"
-        PAPER_SEARCH_SUCCEEDED = "PAPER_SEARCH_SUCCEEDED"
-        PAPER_SEARCH_FAILED = "PAPER_SEARCH_FAILED"
-        PAPER_SEARCH_REJECTED = "PAPER_SEARCH_REJECTED"
-        PAPER_SAVE_STARTED = "PAPER_SAVE_STARTED"
-        PAPER_SAVE_SUCCEEDED = "PAPER_SAVE_SUCCEEDED"
-        PAPER_SAVE_FAILED = "PAPER_SAVE_FAILED"
-        PAPER_SAVE_REJECTED = "PAPER_SAVE_REJECTED"
+        PAPER_SEARCH_STARTED = 3100
+        PAPER_SEARCH_SUCCEEDED = 3200
+        PAPER_SEARCH_FAILED = 3500
+        PAPER_SEARCH_REJECTED = 3400
+        PAPER_SAVE_STARTED = 4100
+        PAPER_SAVE_SUCCEEDED = 4200
+        PAPER_SAVE_FAILED = 4500
+        PAPER_SAVE_REJECTED = 4400
+        PAPER_EXTRACTION_STARTED = 5100
+        PAPER_EXTRACTION_SUCCEEDED = 5200
+        PAPER_EXTRACTION_FAILED = 5500
 
     class AppLogger:
         def __init__(self, name: str):
             self.name = name
+
         def log(self, code, **kwargs):
             pass
 
@@ -109,7 +113,7 @@ class SearchIntent(BaseModel):
     sort_by: str = Field(description="가장 유명한, 영향력 있는, 중요한 등의 뉘앙스가 있으면 'r'(영향력/관련도 순), 최신이면 'n'", default="r")
     max_results: int = Field(description="사용자가 요청한 논문의 개수 (명시되지 않았으면 10)", default=10)
     auto_save: bool = Field(description="검색과 동시에 즉시 저장/다운로드를 요구했는지 여부 (예: '10개 찾고 5개 저장', '찾아서 바로 다운')", default=False)
-    save_count: Optional[int] = Field(description="즉시 저장할 경우 저장할 논문 개수 (예: '5개 저장'이면 5, '전부 저장'이면 max_results와 동일, 미지정 시 None)", default=None)
+    save_count: Optional[int] = Field(description="즉시 저장할 경우 저장할 논문 개수 (예: '5개 저장'이면 5, 미지정 시 None)", default=None)
 
 
 class SaveActionIntent(BaseModel):
@@ -122,7 +126,7 @@ class KeywordConfirmIntent(BaseModel):
 
 
 class ArxivSearchBot:
-    """ArXiv 외부 논문 검색(원샷/순차 겸용), 메타데이터 저장, 본문 섹션 추출을 전담하는 서비스 클래스"""
+    """ArXiv 외부 논문 검색, 메타데이터 저장, 서재 조회/동기화, 본문 섹션 추출 및 벡터 색인을 전담하는 서비스 클래스"""
 
     def __init__(self, data_dir: Optional[str] = None, model_name: str = OPENAI_CHAT_MODEL):
         root_data_dir = PROJECT_ROOT / "data" / "paper_list"
@@ -166,6 +170,88 @@ class ArxivSearchBot:
                 error_type=type(e).__name__,
                 error=str(e)
             )
+
+    def list_saved_papers(self) -> None:
+        """내 서재(saved_papers.db)에 저장되어 있는 논문 목록과 본문 추출 상태를 출력한다."""
+        if not os.path.exists(self.db_file):
+            print("\n[System] 📭 아직 생성된 서재 DB가 없습니다.")
+            return
+
+        with sqlite3.connect(self.db_file) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT id, title, authors, created_at FROM papers ORDER BY created_at DESC")
+            rows = cursor.fetchall()
+
+        if not rows:
+            print("\n[System] 📭 내 서재에 저장된 논문이 없습니다.")
+            return
+
+        extracted_pids = set()
+        if os.path.exists(str(EXTRACTED_DB)):
+            try:
+                with sqlite3.connect(str(EXTRACTED_DB)) as ext_conn:
+                    extracted_pids = {r[0] for r in ext_conn.execute("SELECT DISTINCT paper_id FROM paper_sections").fetchall()}
+            except Exception:
+                pass
+
+        print(f"\n📚 [내 서재 보관 논문 목록 (총 {len(rows)}편)]")
+        print("=" * 80)
+        for idx, (pid, title, authors, created_at) in enumerate(rows, 1):
+            status_tag = "✅ 본문/색인완료" if pid in extracted_pids else "⏳ 본문미추출"
+            author_short = authors[:40] + "..." if authors and len(authors) > 40 else (authors or "저자 미상")
+            print(f"[{idx:2d}] [{pid}] {title}")
+            print(f"     └ 상태: {status_tag} | 저자: {author_short} | 저장일시: {created_at}")
+            print("-" * 80)
+
+    def sync_missing_papers(self) -> None:
+        """서재 DB(saved_papers.db)와 추출 DB/Chroma의 차집합을 계산하여 미추출 논문을 일괄 추출·색인한다."""
+        if not os.path.exists(self.db_file):
+            print("\n[System] 📭 서재 DB가 존재하지 않습니다.")
+            return
+
+        with sqlite3.connect(self.db_file) as conn:
+            saved_papers = conn.execute("SELECT id, title FROM papers").fetchall()
+
+        if not saved_papers:
+            print("\n[System] 📭 서재에 보관된 논문이 없습니다.")
+            return
+
+        extracted_pids = set()
+        if os.path.exists(str(EXTRACTED_DB)):
+            try:
+                with sqlite3.connect(str(EXTRACTED_DB)) as ext_conn:
+                    extracted_pids = {r[0] for r in ext_conn.execute("SELECT DISTINCT paper_id FROM paper_sections").fetchall()}
+            except Exception:
+                pass
+
+        missing_extractions = [p for p in saved_papers if p[0] not in extracted_pids]
+
+        print(f"\n🔄 [서재 본문 동기화 검사]")
+        print(f"  - 총 보관 논문: {len(saved_papers)}편")
+        print(f"  - 정상 추출 완료: {len(extracted_pids)}편")
+        print(f"  - 본문 미추출/누락: {len(missing_extractions)}편")
+
+        if missing_extractions:
+            print(f"\n📥 총 {len(missing_extractions)}건의 미추출 논문 복구를 시작합니다...")
+            for idx, (pid, title) in enumerate(missing_extractions, 1):
+                print(f"  [{idx}/{len(missing_extractions)}] 🔄 [{pid}] 본문 추출 및 Chroma 색인 중...", end="", flush=True)
+                try:
+                    num_sec = extract_and_save(pid)
+                    print(f" 완료 ({num_sec}개 섹션)")
+                except Exception as e:
+                    print(f" 실패 ({e})")
+        else:
+            print("  ✅ 모든 논문의 본문 섹션이 정상 적재되어 있습니다.")
+
+        try:
+            from services.fulltext_vector_store import ChromaFullTextStore
+            store = ChromaFullTextStore()
+            indexed_count = store.ensure_index()
+            print(f"  ✅ Chroma 벡터 저장소 동기화 완료 (신규 반영 청크: {indexed_count}개)")
+        except Exception as e:
+            print(f"  ⚠️ Chroma 벡터 저장소 동기화 중 오류: {e}")
+
+        print("\n🎉 모든 서재 데이터 동기화가 완료되었습니다.")
 
     def parse_intent(self, user_input: str) -> dict:
         structured_llm = self.llm.with_structured_output(SearchIntent)
@@ -245,71 +331,95 @@ class ArxivSearchBot:
         return results
 
     def save_papers(self, selected_papers: List[dict], extract_content: bool = True) -> str:
-        """선택된 논문의 메타데이터 저장(LIBRARY_DB) 및 본문 섹션 추출(EXTRACTED_DB 적재)을 수행한다."""
+        """선택된 논문을 저장하되, 이미 보관된 논문은 명시하고 건너뛰며 신규 논문만 추출·색인한다."""
         if not selected_papers:
             self.logger.log(LogCode.PAPER_SAVE_REJECTED, reason="empty_selection")
             return "저장할 논문이 없습니다."
 
-        self.logger.log(LogCode.PAPER_SAVE_STARTED, target_count=len(selected_papers))
-
         try:
-            # 1. 서재 DB (papers 테이블) 메타데이터 저장
+            # 1. 서재 DB에서 이미 저장된 paper_id 사전 조회
             with sqlite3.connect(self.db_file) as conn:
                 cursor = conn.cursor()
-                for paper in selected_papers:
-                    try:
-                        cursor.execute(
-                            'INSERT OR IGNORE INTO papers (id, title, authors, summary, pdf_url, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)',
-                            (paper['id'], paper['title'], paper['authors'], paper['summary'], paper['pdf_url'])
-                        )
-                    except Exception:
-                        pass
+                placeholders = ",".join(["?"] * len(selected_papers))
+                target_ids = [p["id"] for p in selected_papers]
+                cursor.execute(f"SELECT id FROM papers WHERE id IN ({placeholders})", target_ids)
+                existing_ids = {row[0] for row in cursor.fetchall()}
 
+            # 2. 신규 논문과 기등록 논문 분류
+            new_papers = [p for p in selected_papers if p["id"] not in existing_ids]
+            already_saved = [p for p in selected_papers if p["id"] in existing_ids]
+
+            notice_lines = []
+            if already_saved:
+                print(f"\n[System] ℹ️ 이미 내 서재에 존재하는 논문 {len(already_saved)}건은 저장을 건너뜁니다:")
+                for p in already_saved:
+                    msg = f"  - [{p['id']}] {p['title']} (이미 보관 중)"
+                    print(msg)
+                    notice_lines.append(f"• [{p['id']}] 이미 서재에 존재함 (건너뜀)")
+
+            if not new_papers:
+                return (
+                    "선택하신 논문이 모두 이미 서재에 저장되어 있습니다.\n"
+                    + "\n".join(notice_lines)
+                )
+
+            # 3. 신규 논문만 서재 DB(papers 테이블)에 INSERT
+            self.logger.log(LogCode.PAPER_SAVE_STARTED, target_count=len(new_papers))
+            with sqlite3.connect(self.db_file) as conn:
+                cursor = conn.cursor()
+                for paper in new_papers:
+                    cursor.execute(
+                        'INSERT INTO papers (id, title, authors, summary, pdf_url, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)',
+                        (paper['id'], paper['title'], paper['authors'], paper['summary'], paper['pdf_url'])
+                    )
                 cursor.execute('DELETE FROM papers WHERE id NOT IN (SELECT id FROM papers ORDER BY created_at DESC LIMIT 1000)')
                 cursor.execute('SELECT id, title FROM papers ORDER BY created_at DESC')
                 rows = cursor.fetchall()
                 conn.commit()
 
-            # JSON 서재 인덱스 동기화
+            # JSON 인덱스 동기화
             json_data = {row[0]: {"id": row[0], "title": row[1]} for row in rows}
             with open(self.json_file, 'w', encoding='utf-8') as f:
                 json.dump(json_data, f, ensure_ascii=False, indent=4)
 
-            # 2. extractor_tool을 통한 본문 섹션 추출
+            # 4. 신규 논문에 대해서만 본문 추출 및 Chroma 벡터 색인 실행
             extraction_results = []
             if extract_content:
-                total_target = len(selected_papers)
-                print(f"\n[System] 📥 총 {total_target}건의 논문 본문 원본(HTML 섹션) 추출 작업을 시작합니다...")
+                total_target = len(new_papers)
+                print(f"\n[System] 📥 신규 논문 총 {total_target}건의 본문 추출 및 Chroma 벡터 색인을 시작합니다...")
 
-                for idx, paper in enumerate(selected_papers, 1):
+                for idx, paper in enumerate(new_papers, 1):
                     pid = paper['id']
-                    print(f"  [{idx}/{total_target}] 🔄 [{pid}] 본문 추출 진행 중...", end="", flush=True)
+                    print(f"  [{idx}/{total_target}] 🔄 [{pid}] 본문 추출 및 벡터 색인 중...", end="", flush=True)
 
                     try:
                         start_time = time.time()
                         num_sections = extract_and_save(pid)
                         elapsed = round(time.time() - start_time, 2)
 
-                        extraction_results.append(f"✓ [{pid}] {num_sections}개 섹션 추출 완료 ({elapsed}s)")
+                        extraction_results.append(f"✓ [{pid}] {num_sections}개 섹션 추출 및 색인 완료 ({elapsed}s)")
                         print(f" 완료! ({num_sections}개 섹션, {elapsed}초)")
 
                     except Exception as ex:
-                        extraction_results.append(f"✗ [{pid}] 본문 추출 실패: {ex}")
+                        extraction_results.append(f"✗ [{pid}] 추출/색인 실패: {ex}")
                         print(f" 실패! (이유: {ex})")
 
-            success_message = (
-                f"{len(selected_papers)}개의 논문이 내 서재에 추가되었습니다. (현재 총 서재 논문: {len(json_data)}개)\n"
-                + "\n".join(extraction_results)
-            )
+            final_message_parts = [
+                f"신규 논문 {len(new_papers)}편이 서재에 추가되었습니다. (현재 총 서재 논문: {len(json_data)}편)"
+            ]
+            if notice_lines:
+                final_message_parts.append("\n[기존 보관 논문 안내]\n" + "\n".join(notice_lines))
+            if extraction_results:
+                final_message_parts.append("\n[본문 추출 결과]\n" + "\n".join(extraction_results))
 
             self.logger.log(
                 LogCode.PAPER_SAVE_SUCCEEDED,
-                saved_count=len(selected_papers),
+                saved_count=len(new_papers),
                 total_library_count=len(json_data),
                 db_path=self.db_file,
                 json_path=self.json_file
             )
-            return success_message
+            return "\n".join(final_message_parts)
 
         except Exception as e:
             self.logger.log(
@@ -321,9 +431,10 @@ class ArxivSearchBot:
             raise RuntimeError(f"논문 저장 중 오류가 발생했습니다: {e}") from e
 
     def start(self, initial_query: str = None) -> None:
-        """대화형 터미널 CLI 루프 (단순 검색 / 즉시 원샷 저장 자동 판별 지원)"""
+        """대화형 터미널 CLI 루프 (서재 조회 / 동기화 / 단순 검색 / 즉시 원샷 저장 판별 지원)"""
         print("=" * 50)
         print(f"🤖 ArXiv 외부 검색 모드 시작 (Main Model: {self.model_name})")
+        print("💡 팁: '서재 목록', '내 논문', '동기화'를 입력하면 보관된 논문 확인 및 복구가 가능합니다.")
         print("=" * 50)
         first_run = True
 
@@ -340,14 +451,25 @@ class ArxivSearchBot:
                 print("\n\n[System] 외부 검색 봇을 종료합니다.")
                 break
 
-            if not user_input.strip():
+            clean_input = user_input.strip()
+            if not clean_input:
                 continue
-            if any(keyword in user_input.lower() for keyword in ["종료", "그만", "중지", "멈춰", "q", "quit", "exit", "돌아가기"]):
+            if any(keyword in clean_input.lower() for keyword in ["종료", "그만", "중지", "멈춰", "q", "quit", "exit", "돌아가기"]):
                 print("\n[System] 외부 검색을 종료합니다.")
                 break
 
-            # 1. 사용자 의도 고속 파싱 (단순 검색 vs 검색 후 즉시 저장 여부)
-            params = self.parse_intent(user_input)
+            # 1. 서재 목록 및 일괄 동기화 명령 감지
+            no_space_input = re.sub(r"\s+", "", clean_input)
+            if any(k in no_space_input for k in ["동기화", "서재동기화", "미추출추출", "전체추출", "복구"]):
+                self.sync_missing_papers()
+                continue
+
+            if any(k in no_space_input for k in ["내서재", "서재목록", "내논문", "보관함", "저장된논문", "서재보여줘", "내논문목록"]):
+                self.list_saved_papers()
+                continue
+
+            # 2. 사용자 검색/저장 의도 파싱
+            params = self.parse_intent(clean_input)
             if not params.get("query"):
                 params["query"] = input("❓ 검색할 단어(영문)가 빠져있습니다. 무엇으로 검색할까요?: ")
             if not params.get("sort_by"):
@@ -360,7 +482,6 @@ class ArxivSearchBot:
 
             final_query = None
             if generate_arxiv_keywords is not None:
-                # [자동화 분기] auto_save가 True인 경우 불필요한 사용자 확인(HITL)을 생략하고 바로 검색으로 직행
                 if auto_save:
                     try:
                         print(f"\n[Tool] ⚡ '{params['query']}' 학술 키워드 생성 및 원스톱 파이프라인 가동...")
@@ -371,7 +492,6 @@ class ArxivSearchBot:
                     except Exception:
                         final_query = f'ti:"{params["query"]}"'
                 else:
-                    # 단순 검색 시에는 키워드 검토 기회 제공
                     while True:
                         try:
                             kw_start = time.time()
@@ -426,18 +546,14 @@ class ArxivSearchBot:
                     f"{idx + 1}. [{p['id']}] {p['title']}\n   - 저자: {p['authors']}\n   - 요약: {p['summary'][:150]}...\n" + "-" * 60
                 )
 
-            # ---------------------------------------------------------
-            # [동적 분기 처리]: 즉시 원샷 저장 vs 대화형 수동 번호 선택
-            # ---------------------------------------------------------
+            # 원샷 자동 저장 분기
             if auto_save:
-                # 사용자가 '10개 찾고 5개 저장'과 같이 명령한 경우: 질문 없이 즉시 자동 저장
                 actual_save_count = save_count if save_count and 0 < save_count <= len(papers) else len(papers)
                 target_papers = papers[:actual_save_count]
-                print(f"\n[System] ⚡ 원샷 명령 감지: 상위 {actual_save_count}편을 즉시 서재 등록 및 본문 추출합니다.")
+                print(f"\n[System] ⚡ 원샷 명령 감지: 상위 {actual_save_count}편을 즉시 서재 등록 및 본문 추출/색인합니다.")
                 save_msg = self.save_papers(target_papers, extract_content=True)
                 print(f"\n[System] 💾 {save_msg}")
             else:
-                # 단순 검색 요청인 경우: 번호를 선택받는 순차 대화 진행
                 ans = input("\n[선택] 내 서재에 저장하고 본문을 추출할 논문 번호를 입력하세요.\n(예: '1, 3번 저장해', '전부 다 저장해', 저장 안 하려면 엔터): ")
                 if not ans.strip():
                     continue
@@ -491,14 +607,12 @@ def search_arxiv_papers_tool(query: str, max_results: int = 10, sort_by: str = "
 
 
 class SaveAndExtractToolInput(BaseModel):
-    paper_ids: List[str] = Field(..., description="내 서재(Library DB)에 메타데이터를 저장하고, 본문 섹션(Extracted DB)까지 함께 추출할 논문 ID 목록 (예: ['2402.08954', '2312.00752'])")
+    paper_ids: List[str] = Field(..., description="내 서재(Library DB)에 메타데이터를 저장하고, 본문 섹션 추출 및 벡터 색인까지 함께 수행할 논문 ID 목록 (예: ['2402.08954'])")
 
 
 @tool("save_and_extract_papers", args_schema=SaveAndExtractToolInput)
 def save_and_extract_papers_tool(paper_ids: List[str]) -> str:
-    """선별된 논문의 메타데이터를 서재 DB(papers 테이블)에 등록하고,
-    동시에 extractor_tool을 실행해 본문 HTML 섹션을 추출 DB(paper_sections 테이블)에 영구 적재합니다.
-    """
+    """선별된 논문의 메타데이터를 서재 DB에 등록하고, 본문 HTML 섹션을 추출 DB 및 Chroma 컬렉션에 영구 색인합니다."""
     global _SEARCH_CACHE
     bot = ArxivSearchBot()
 
@@ -536,14 +650,11 @@ def save_and_extract_papers_tool(paper_ids: List[str]) -> str:
         msg = bot.save_papers(selected_papers, extract_content=True)
         return msg
     except Exception as e:
-        return f"서재 저장 및 본문 추출 실패: {str(e)}"
+        return f"서재 저장 및 본문 추출/색인 실패: {str(e)}"
 
 
-# ---------------------------------------------------------------------
-# [SearchAgent: 검색-서재저장-본문추출 자율 오케스트레이션 에이전트]
-# ---------------------------------------------------------------------
 class SearchAgent:
-    """자연어 지시를 해석하여 ArXiv 제목 검색, 서재 등록, 본문 섹션 추출을 조율하는 에이전트"""
+    """자연어 지시를 해석하여 ArXiv 제목 검색, 서재 등록, 본문 섹션 추출 및 색인을 조율하는 에이전트"""
 
     def __init__(self, model_name: str = OPENAI_CHAT_MODEL):
         self.llm = create_safe_chat_model(model_name, temperature=0.0)
@@ -555,10 +666,10 @@ class SearchAgent:
         self.system_prompt = (
             "당신은 학술 논문 탐색 및 수집 전문 에이전트입니다.\n"
             "사용자의 요구사항에 따라 2개의 도구를 순차적으로 제어하세요:\n\n"
-            "1. `search_arxiv_papers`: 사용자가 요청한 키워드와 개수(예: 10개)에 맞춰 논문 제목(ti:)을 검색합니다.\n"
-            "2. `save_and_extract_papers`: 검색 결과 중 사용자가 저장을 원하는 논문(예: '상위 5개', '전부' 등)의 ID를 골라 서재 등록 및 본문 섹션 추출을 실행합니다.\n\n"
+            "1. `search_arxiv_papers`: 사용자가 요청한 키워드와 개수에 맞춰 논문 제목(ti:)을 검색합니다.\n"
+            "2. `save_and_extract_papers`: 검색 결과 중 사용자가 저장을 원하는 논문의 ID를 골라 서재 등록, 본문 섹션 추출 및 벡터 색인을 실행합니다.\n\n"
             "규칙:\n"
-            "- 절대로 임의로 요약 리포트를 지어내지 말고, 수행된 작업 결과(검색 목록, 서재 저장 및 본문 추출 성공 현황)를 명확한 목록 형태로 출력하세요."
+            "- 절대로 임의로 요약 리포트를 지어내지 말고, 수행된 작업 결과 목록을 명확히 출력하세요."
         )
 
         self.agent = create_react_agent(
@@ -568,15 +679,11 @@ class SearchAgent:
         )
 
     def run(self, query: str) -> str:
-        """자연어 지시사항을 전달받아 에이전트 워크플로우를 실행"""
         inputs = {"messages": [HumanMessage(content=query)]}
         response = self.agent.invoke(inputs)
         return response["messages"][-1].content
 
 
-# ---------------------------------------------------------------------
-# [실행 엔트리포인트]
-# ---------------------------------------------------------------------
 if __name__ == "__main__":
     bot = ArxivSearchBot()
     bot.start()

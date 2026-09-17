@@ -2,7 +2,7 @@
 
 The library database keeps the user's saved papers. The extracted database
 keeps one row per section, while preserving both searchable text and HTML.
-Supports both standalone CLI usage and LangChain Agent @tool integration.
+Automatically synchronizes extracted sections to Chroma vector store upon extraction.
 """
 
 from __future__ import annotations
@@ -35,31 +35,26 @@ if str(PROJECT_ROOT) not in sys.path:
 
 load_dotenv()
 
-# 로거 모듈 임포트 (Fallback 안전망 포함)
+# 로거 모듈 임포트 (기존 5000번대 공식 규격 반영)
 try:
     from log.app_logger import AppLogger
     from log.log_codes import LogCode
 except ImportError:
     class LogCode:
-        pass
+        PAPER_EXTRACTION_STARTED = 5100
+        PAPER_EXTRACTION_SKIPPED = 5101
+        PAPER_EXTRACTION_SUCCEEDED = 5200
+        PAPER_EXTRACTION_REJECTED = 5400
+        PAPER_EXTRACTION_FAILED = 5500
 
     class AppLogger:
         def __init__(self, name: str):
             self.name = name
+
         def log(self, code, **kwargs):
             pass
 
 logger = AppLogger(__name__)
-
-
-def safe_log(code_name: str, **kwargs) -> None:
-    """LogCode에 등록된 정식 코드일 때만 로깅을 실행하여 미등록 코드 예외를 방지한다."""
-    try:
-        if hasattr(LogCode, code_name):
-            logger.log(getattr(LogCode, code_name), **kwargs)
-    except Exception:
-        pass
-
 
 # DB 경로 설정
 try:
@@ -159,28 +154,28 @@ class ArxivExtractor:
 
 
 def extract_and_save(paper_id: str) -> int:
-    """서재 DB(papers) 등록 여부를 검증하고, 추출 DB(paper_sections)에 본문 섹션을 적재합니다."""
+    """서재 DB 등록을 검증하고, 추출 DB에 섹션을 적재한 뒤 Chroma 벡터 색인을 즉시 동기화한다."""
     clean_id = re.sub(r"v\d+$", "", paper_id.strip())
     init_schema()
 
-    # 안전 로깅 호출
-    safe_log("PAPER_EXTRACT_STARTED", paper_id=clean_id, status="extracting")
+    # 정식 로그 코드 사용 (5100: PAPER_EXTRACTION_STARTED)
+    logger.log(LogCode.PAPER_EXTRACTION_STARTED, paper_id=clean_id, status="extracting")
     start_time = time.time()
 
     if not LIBRARY_DB.exists():
         err_msg = f"서재 DB를 찾을 수 없습니다: {LIBRARY_DB}"
-        safe_log("PAPER_EXTRACT_FAILED", paper_id=clean_id, error=err_msg, error_type="FileNotFoundError")
+        logger.log(LogCode.PAPER_EXTRACTION_FAILED, paper_id=clean_id, error=err_msg, error_type="FileNotFoundError")
         raise ValueError(err_msg)
 
-    # 외래키 사전 검증
     with sqlite3.connect(LIBRARY_DB) as library:
         paper = library.execute("SELECT id FROM papers WHERE id = ?", (clean_id,)).fetchone()
     if not paper:
         err_msg = f"paper_library.papers에 존재하지 않는 paper_id입니다: {clean_id}. 서재 선행 등록 필요"
-        safe_log("PAPER_EXTRACT_FAILED", paper_id=clean_id, error=err_msg, error_type="MissingLibraryRecord")
+        logger.log(LogCode.PAPER_EXTRACTION_FAILED, paper_id=clean_id, error=err_msg, error_type="MissingLibraryRecord")
         raise ValueError(err_msg)
 
     try:
+        # 1. HTML 본문 섹션 추출 및 SQLite 적재
         sections = ArxivExtractor().extract(clean_id)
         with sqlite3.connect(EXTRACTED_DB) as extracted:
             extracted.execute("DELETE FROM paper_sections WHERE paper_id = ?", (clean_id,))
@@ -191,9 +186,17 @@ def extract_and_save(paper_id: str) -> int:
                 [(clean_id, order, title, text, fragment) for order, title, text, fragment in sections],
             )
 
+        # 2. SQLite 적재 완료 직후 Chroma 본문 벡터 스토어 즉시 색인 동기화
+        try:
+            from services.fulltext_vector_store import ChromaFullTextStore
+            ChromaFullTextStore().ensure_index(paper_id=clean_id)
+        except Exception as embed_err:
+            print(f"  [Notice] Chroma 벡터 색인 보조 작업 경고 ({clean_id}): {embed_err}")
+
         elapsed = round(time.time() - start_time, 2)
-        safe_log(
-            "PAPER_EXTRACT_SUCCEEDED",
+        # 정식 로그 코드 사용 (5200: PAPER_EXTRACTION_SUCCEEDED)
+        logger.log(
+            LogCode.PAPER_EXTRACTION_SUCCEEDED,
             paper_id=clean_id,
             section_count=len(sections),
             duration_sec=elapsed,
@@ -203,8 +206,9 @@ def extract_and_save(paper_id: str) -> int:
 
     except Exception as e:
         elapsed = round(time.time() - start_time, 2)
-        safe_log(
-            "PAPER_EXTRACT_FAILED",
+        # 정식 로그 코드 사용 (5500: PAPER_EXTRACTION_FAILED)
+        logger.log(
+            LogCode.PAPER_EXTRACTION_FAILED,
             paper_id=clean_id,
             error=str(e),
             error_type=type(e).__name__,
@@ -244,25 +248,20 @@ def export_markdown(paper_id: str, output_path: str | Path | None = None) -> Pat
     return destination
 
 
-# ---------------------------------------------------------------------
-# [LangChain 에이전트 연동용 Tool 선언]
-# ---------------------------------------------------------------------
 class ExtractToolInput(BaseModel):
-    paper_id: str = Field(..., description="본문 섹션을 추출할 arXiv 논문 ID (예: '2402.08954', '2312.00752')")
-    export_md: bool = Field(default=False, description="추출 결과를 Markdown 파일(.md)로도 로컬에 내보낼지 여부")
+    paper_id: str = Field(..., description="본문 섹션을 추출할 arXiv 논문 ID (예: '2402.08954')")
+    export_md: bool = Field(default=False, description="추출 결과를 Markdown 파일로도 로컬에 내보낼지 여부")
 
 
 @tool("extract_paper_content", args_schema=ExtractToolInput)
 def extract_paper_content_tool(paper_id: str, export_md: bool = False) -> str:
     """서재 DB(papers 테이블)에 등록된 arXiv 논문의 HTML 본문을 파싱하여
-    수식과 표가 보존된 섹션별 데이터를 추출 DB(paper_sections 테이블)에 적재합니다.
-
-    선행 조건: 대상 paper_id가 save_papers_to_library 도구를 통해 서재에 먼저 등록되어 있어야 합니다.
+    수식과 표가 보존된 섹션별 데이터를 추출 DB에 적재하고 벡터 색인을 동기화합니다.
     """
     clean_id = re.sub(r"v\d+$", "", paper_id.strip())
     try:
         num_sections = extract_and_save(clean_id)
-        result_msg = f"[추출 성공] 논문 [{clean_id}]의 본문이 총 {num_sections}개 섹션으로 추출되어 paper_sections 테이블에 적재되었습니다."
+        result_msg = f"[추출 및 색인 성공] 논문 [{clean_id}]의 본문 {num_sections}개 섹션이 DB 적재 및 Chroma 색인 완료되었습니다."
         if export_md:
             md_path = export_markdown(clean_id)
             result_msg += f" (Markdown 파일 저장 경로: {md_path})"
@@ -275,11 +274,8 @@ def extract_paper_content_tool(paper_id: str, export_md: bool = False) -> str:
         return f"[시스템 예외] 논문 추출 중 알 수 없는 오류 발생 ({clean_id}): {str(e)}"
 
 
-# ---------------------------------------------------------------------
-# [CLI 직접 실행 블록]
-# ---------------------------------------------------------------------
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="arXiv HTML 본문 섹션 추출 도구")
+    parser = argparse.ArgumentParser(description="arXiv HTML 본문 섹션 추출 및 벡터 색인 도구")
     parser.add_argument("paper_id", help="예: 2402.08954 또는 2402.08954v1")
     parser.add_argument("--export-md", action="store_true", help="추출 결과를 Markdown으로 저장")
     args = parser.parse_args()
