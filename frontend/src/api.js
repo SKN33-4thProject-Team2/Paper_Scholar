@@ -2,12 +2,16 @@ const API_BASE_URL = (
   import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000/api'
 ).replace(/\/$/, '')
 
-async function request(pathOrUrl) {
+async function request(pathOrUrl, options = {}) {
   const url = pathOrUrl.startsWith('http')
     ? pathOrUrl
     : `${API_BASE_URL}${pathOrUrl}`
   const response = await fetch(url, {
-    headers: { Accept: 'application/json' },
+    ...options,
+    headers: {
+      Accept: 'application/json',
+      ...options.headers,
+    },
   })
 
   if (!response.ok) {
@@ -34,4 +38,12 @@ export function getPapers(url) {
 
 export function getPaper(arxivId) {
   return request(`/papers/${encodeURIComponent(arxivId)}/`)
+}
+
+export function searchArxiv(params) {
+  return request('/search/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(params),
+  })
 }

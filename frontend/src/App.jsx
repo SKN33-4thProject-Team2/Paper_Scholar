@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { getHealth, getPaper, getPapers } from './api'
+import SearchPanel from './SearchPanel'
 import './App.css'
 
 function StatusBadge({ children, tone = 'neutral' }) {
@@ -70,6 +71,7 @@ function PaperDetail({ paper, loading }) {
 }
 
 function App() {
+  const [activeView, setActiveView] = useState('library')
   const [health, setHealth] = useState('checking')
   const [paperPage, setPaperPage] = useState(null)
   const [selectedId, setSelectedId] = useState(null)
@@ -119,8 +121,12 @@ function App() {
       <header className="app-header">
         <div>
           <span className="eyebrow">Paper Scholar</span>
-          <h1>내 논문 서재</h1>
-          <p>MySQL에 저장된 논문과 처리 상태를 한곳에서 확인합니다.</p>
+          <h1>{activeView === 'library' ? '내 논문 서재' : 'arXiv 논문 검색'}</h1>
+          <p>
+            {activeView === 'library'
+              ? 'MySQL에 저장된 논문과 처리 상태를 한곳에서 확인합니다.'
+              : '새 논문을 검색하고 저장할 자료를 살펴봅니다.'}
+          </p>
         </div>
         <StatusBadge tone={health === 'online' ? 'success' : health === 'offline' ? 'danger' : 'neutral'}>
           <span className="status-dot" />
@@ -128,10 +134,30 @@ function App() {
         </StatusBadge>
       </header>
 
-      {error && <div className="error-banner" role="alert">{error}</div>}
+      <nav className="view-tabs" aria-label="주요 화면">
+        <button
+          type="button"
+          className={activeView === 'library' ? 'view-tabs__active' : ''}
+          onClick={() => setActiveView('library')}
+        >
+          내 서재
+        </button>
+        <button
+          type="button"
+          className={activeView === 'search' ? 'view-tabs__active' : ''}
+          onClick={() => setActiveView('search')}
+        >
+          arXiv 검색
+        </button>
+      </nav>
 
-      <div className="workspace">
-        <section className="library-panel">
+      {activeView === 'library' && error && (
+        <div className="error-banner" role="alert">{error}</div>
+      )}
+
+      {activeView === 'library' ? (
+        <div className="workspace">
+          <section className="library-panel">
           <div className="panel-heading">
             <div>
               <span className="eyebrow">Library</span>
@@ -163,12 +189,15 @@ function App() {
               다음
             </button>
           </nav>
-        </section>
+          </section>
 
-        <section className="detail-panel">
-          <PaperDetail paper={selectedPaper} loading={detailLoading} />
-        </section>
-      </div>
+          <section className="detail-panel">
+            <PaperDetail paper={selectedPaper} loading={detailLoading} />
+          </section>
+        </div>
+      ) : (
+        <SearchPanel />
+      )}
     </main>
   )
 }
