@@ -1,6 +1,6 @@
 from rest_framework import serializers
 
-from .models import Paper, PaperSection, PaperSummary, Translation
+from .models import Paper, PaperSection, PaperSummary, ProcessingJob, Translation
 
 
 class PaperListSerializer(serializers.ModelSerializer):
@@ -103,3 +103,36 @@ class ArxivSearchResultSerializer(serializers.Serializer):
     authors = serializers.ListField(child=serializers.CharField())
     abstract = serializers.CharField()
     pdf_url = serializers.URLField(allow_blank=True)
+
+
+class PaperSaveRequestSerializer(serializers.Serializer):
+    papers = ArxivSearchResultSerializer(many=True, allow_empty=False)
+    extract_content = serializers.BooleanField(default=True)
+
+    def validate_papers(self, value):
+        if len(value) > 15:
+            raise serializers.ValidationError("한 번에 최대 15편까지 저장할 수 있습니다.")
+        paper_ids = [paper["arxiv_id"] for paper in value]
+        if len(paper_ids) != len(set(paper_ids)):
+            raise serializers.ValidationError("같은 논문을 중복 선택할 수 없습니다.")
+        return value
+
+
+class ProcessingJobSerializer(serializers.ModelSerializer):
+    arxiv_id = serializers.CharField(source="paper.arxiv_id", read_only=True)
+
+    class Meta:
+        model = ProcessingJob
+        fields = (
+            "id",
+            "arxiv_id",
+            "job_type",
+            "status",
+            "progress_current",
+            "progress_total",
+            "model_name",
+            "error_message",
+            "started_at",
+            "completed_at",
+            "created_at",
+        )

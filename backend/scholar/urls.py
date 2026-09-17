@@ -4,9 +4,11 @@ from .views import (
     ArxivSearchAPIView,
     PaperDetailAPIView,
     PaperListAPIView,
+    PaperSaveAPIView,
     PaperSectionsAPIView,
     PaperSummaryAPIView,
     PaperTranslationsAPIView,
+    ProcessingJobDetailAPIView,
     health_check,
 )
 
@@ -17,6 +19,12 @@ urlpatterns = [
     path("health/", health_check, name="health"),
     path("search/", ArxivSearchAPIView.as_view(), name="arxiv-search"),
     path("papers/", PaperListAPIView.as_view(), name="paper-list"),
+    path("papers/save/", PaperSaveAPIView.as_view(), name="paper-save"),
+    path(
+        "jobs/<int:pk>/",
+        ProcessingJobDetailAPIView.as_view(),
+        name="processing-job-detail",
+    ),
     path(
         "papers/<str:arxiv_id>/",
         PaperDetailAPIView.as_view(),

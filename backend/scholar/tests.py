@@ -3,7 +3,13 @@ from rest_framework import status
 from rest_framework.test import APITestCase
 from unittest.mock import patch
 
-from .models import Paper, PaperSection, PaperSummary, Translation
+from .models import (
+    Paper,
+    PaperSection,
+    PaperSummary,
+    ProcessingJob,
+    Translation,
+)
 
 
 class PaperAPITest(APITestCase):
@@ -254,3 +260,256 @@ class ArxivSearchAPITest(APITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
         self.assertIn("temporary failure", response.data["detail"])
+
+
+class PaperSaveAPITest(APITestCase):
+    def setUp(self):
+        self.payload = {
+            "papers": [
+                {
+                    "arxiv_id": "1706.03762",
+                    "title": "Attention Is All You Need",
+                    "authors": ["Ashish Vaswani", "Noam Shazeer"],
+                    "abstract": "Transformer abstract",
+                    "pdf_url": "https://arxiv.org/pdf/1706.03762",
+                }
+            ],
+            "extract_content": True,
+        }
+
+    @patch("scholar.views.save_papers_and_create_jobs")
+    def test_save_returns_extraction_job(self, save_mock):
+        paper = Paper.objects.create(
+            arxiv_id="1706.03762",
+            title="Attention Is All You Need",
+            authors=["Ashish Vaswani", "Noam Shazeer"],
+        )
+        job = ProcessingJob.objects.create(
+            paper=paper,
+            job_type=ProcessingJob.JobType.EXTRACT,
+            status=ProcessingJob.Status.PENDING,
+            progress_total=1,
+        )
+        save_mock.return_value = ("논문을 저장했습니다.", [job])
+
+        response = self.client.post(
+            reverse("scholar:paper-save"),
+            self.payload,
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(response.data["message"], "논문을 저장했습니다.")
+        self.assertEqual(response.data["jobs"][0]["id"], job.id)
+        self.assertEqual(
+            response.data["jobs"][0]["arxiv_id"],
+            "1706.03762",
+        )
+        self.assertEqual(response.data["jobs"][0]["status"], "pending")
+        save_mock.assert_called_once_with(
+            self.payload["papers"],
+            extract_content=True,
+        )
+
+    @patch("scholar.views.save_papers_and_create_jobs")
+    def test_save_without_extraction_returns_no_jobs(self, save_mock):
+        save_mock.return_value = ("메타데이터를 저장했습니다.", [])
+        self.payload["extract_content"] = False
+
+        response = self.client.post(
+            reverse("scholar:paper-save"),
+            self.payload,
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["jobs"], [])
+        save_mock.assert_called_once_with(
+            self.payload["papers"],
+            extract_content=False,
+        )
+
+    @patch("scholar.views.save_papers_and_create_jobs")
+    def test_save_rejects_empty_or_duplicate_selection(self, save_mock):
+        invalid_payloads = (
+            {"papers": [], "extract_content": True},
+            {
+                "papers": self.payload["papers"] * 2,
+                "extract_content": True,
+            },
+        )
+
+        for payload in invalid_payloads:
+            with self.subTest(payload=payload):
+                response = self.client.post(
+                    reverse("scholar:paper-save"),
+                    payload,
+                    format="json",
+                )
+                self.assertEqual(
+                    response.status_code,
+                    status.HTTP_400_BAD_REQUEST,
+                )
+
+        save_mock.assert_not_called()
+
+    @patch("scholar.views.save_papers_and_create_jobs")
+    def test_save_reports_pipeline_failure(self, save_mock):
+        save_mock.side_effect = RuntimeError("database unavailable")
+
+        response = self.client.post(
+            reverse("scholar:paper-save"),
+            self.payload,
+            format="json",
+        )
+
+        self.assertEqual(
+            response.status_code,
+            status.HTTP_500_INTERNAL_SERVER_ERROR,
+        )
+        self.assertIn("database unavailable", response.data["detail"])
+
+    def test_processing_job_detail_returns_current_status(self):
+        paper = Paper.objects.create(
+            arxiv_id="2401.00001",
+            title="Job status paper",
+            authors=[],
+        )
+        job = ProcessingJob.objects.create(
+            paper=paper,
+            job_type=ProcessingJob.JobType.EXTRACT,
+            status=ProcessingJob.Status.RUNNING,
+            progress_current=0,
+            progress_total=1,
+        )
+
+        response = self.client.get(
+            reverse(
+                "scholar:processing-job-detail",
+                kwargs={"pk": job.id},
+            )
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["id"], job.id)
+        self.assertEqual(response.data["arxiv_id"], "2401.00001")
+        self.assertEqual(response.data["job_type"], "extract")
+        self.assertEqual(response.data["status"], "running")
+
+    def test_processing_job_detail_returns_404_for_unknown_job(self):
+        response = self.client.get(
+            reverse(
+                "scholar:processing-job-detail",
+                kwargs={"pk": 999999},
+            )
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    @patch("scholar.views.enqueue_extraction_job")
+    @patch("src.feature.search.ArxivSearchBot")
+    def test_save_service_enqueues_missing_extraction_once(
+        self,
+        bot_class_mock,
+        enqueue_mock,
+    ):
+        from .views import save_papers_and_create_jobs
+
+        Paper.objects.create(
+            arxiv_id="1706.03762",
+            title="Attention Is All You Need",
+            authors=["Ashish Vaswani", "Noam Shazeer"],
+        )
+        bot_class_mock.return_value.save_papers.return_value = "saved"
+
+        _, first_jobs = save_papers_and_create_jobs(
+            self.payload["papers"],
+            extract_content=True,
+        )
+        _, second_jobs = save_papers_and_create_jobs(
+            self.payload["papers"],
+            extract_content=True,
+        )
+
+        self.assertEqual(first_jobs[0].id, second_jobs[0].id)
+        self.assertEqual(first_jobs[0].status, ProcessingJob.Status.PENDING)
+        enqueue_mock.assert_called_once_with(first_jobs[0].id)
+
+    @patch("scholar.views.enqueue_extraction_job")
+    @patch("src.feature.search.ArxivSearchBot")
+    def test_save_service_marks_existing_sections_completed(
+        self,
+        bot_class_mock,
+        enqueue_mock,
+    ):
+        from .views import save_papers_and_create_jobs
+
+        paper = Paper.objects.create(
+            arxiv_id="1706.03762",
+            title="Attention Is All You Need",
+            authors=["Ashish Vaswani", "Noam Shazeer"],
+        )
+        PaperSection.objects.create(
+            paper=paper,
+            section_order=1,
+            section_title="Introduction",
+            section_text="Body",
+        )
+        bot_class_mock.return_value.save_papers.return_value = "saved"
+
+        _, jobs = save_papers_and_create_jobs(
+            self.payload["papers"],
+            extract_content=True,
+        )
+
+        self.assertEqual(jobs[0].status, ProcessingJob.Status.COMPLETED)
+        self.assertEqual(jobs[0].progress_current, 1)
+        self.assertEqual(jobs[0].progress_total, 1)
+        enqueue_mock.assert_not_called()
+
+    @patch("scholar.jobs.extract_paper_content")
+    def test_extraction_worker_completes_job(self, extract_mock):
+        from .jobs import _run_extraction_job
+
+        paper = Paper.objects.create(
+            arxiv_id="2501.00001",
+            title="Worker test paper",
+            authors=[],
+        )
+        job = ProcessingJob.objects.create(
+            paper=paper,
+            job_type=ProcessingJob.JobType.EXTRACT,
+            progress_total=1,
+        )
+
+        _run_extraction_job(job.id)
+        job.refresh_from_db()
+
+        extract_mock.assert_called_once_with("2501.00001")
+        self.assertEqual(job.status, ProcessingJob.Status.COMPLETED)
+        self.assertEqual(job.progress_current, 1)
+        self.assertIsNotNone(job.started_at)
+        self.assertIsNotNone(job.completed_at)
+
+    @patch("scholar.jobs.extract_paper_content")
+    def test_extraction_worker_records_failure(self, extract_mock):
+        from .jobs import _run_extraction_job
+
+        extract_mock.side_effect = RuntimeError("extract failed")
+        paper = Paper.objects.create(
+            arxiv_id="2501.00002",
+            title="Worker failure paper",
+            authors=[],
+        )
+        job = ProcessingJob.objects.create(
+            paper=paper,
+            job_type=ProcessingJob.JobType.EXTRACT,
+            progress_total=1,
+        )
+
+        _run_extraction_job(job.id)
+        job.refresh_from_db()
+
+        self.assertEqual(job.status, ProcessingJob.Status.FAILED)
+        self.assertEqual(job.error_message, "extract failed")
+        self.assertIsNotNone(job.completed_at)

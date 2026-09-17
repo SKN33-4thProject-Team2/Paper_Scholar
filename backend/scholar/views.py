@@ -1,5 +1,6 @@
 from django.db.models import Count, Exists, OuterRef
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.generics import ListAPIView, RetrieveAPIView
 from rest_framework.permissions import AllowAny
@@ -7,16 +8,88 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.views import APIView
 
-from .models import Paper, PaperSummary
+from .jobs import enqueue_extraction_job
+from .models import Paper, PaperSummary, ProcessingJob
 from .serializers import (
     ArxivSearchRequestSerializer,
     ArxivSearchResultSerializer,
     PaperDetailSerializer,
     PaperListSerializer,
     PaperSectionSerializer,
+    PaperSaveRequestSerializer,
     PaperSummarySerializer,
+    ProcessingJobSerializer,
     TranslationSerializer,
 )
+
+
+def save_papers_and_create_jobs(
+    papers: list[dict],
+    *,
+    extract_content: bool,
+) -> tuple[str, list[ProcessingJob]]:
+    """기존 저장 흐름으로 메타데이터를 보존하고 추출 작업을 등록합니다."""
+    from src.feature.search import ArxivSearchBot
+    from src.services.django_paper_repository import normalize_arxiv_id
+
+    legacy_papers = [
+        {
+            "id": paper["arxiv_id"],
+            "title": paper["title"],
+            "authors": ", ".join(paper["authors"]),
+            "summary": paper["abstract"],
+            "pdf_url": paper["pdf_url"],
+        }
+        for paper in papers
+    ]
+    save_message = ArxivSearchBot().save_papers(
+        legacy_papers,
+        extract_content=False,
+    )
+
+    if not extract_content:
+        return save_message, []
+
+    jobs = []
+    for paper_data in papers:
+        paper = Paper.objects.get(
+            arxiv_id=normalize_arxiv_id(paper_data["arxiv_id"])
+        )
+        if paper.sections.exists():
+            job = paper.processing_jobs.filter(
+                job_type=ProcessingJob.JobType.EXTRACT,
+                status=ProcessingJob.Status.COMPLETED,
+            ).first()
+            if job is None:
+                now = timezone.now()
+                job = ProcessingJob.objects.create(
+                    paper=paper,
+                    job_type=ProcessingJob.JobType.EXTRACT,
+                    status=ProcessingJob.Status.COMPLETED,
+                    progress_current=1,
+                    progress_total=1,
+                    started_at=now,
+                    completed_at=now,
+                )
+        else:
+            job = paper.processing_jobs.filter(
+                job_type=ProcessingJob.JobType.EXTRACT,
+                status__in=(
+                    ProcessingJob.Status.PENDING,
+                    ProcessingJob.Status.RUNNING,
+                ),
+            ).first()
+            if job is None:
+                job = ProcessingJob.objects.create(
+                    paper=paper,
+                    job_type=ProcessingJob.JobType.EXTRACT,
+                    status=ProcessingJob.Status.PENDING,
+                    progress_total=1,
+                )
+                enqueue_extraction_job(job.id)
+        jobs.append(job)
+
+    return save_message, jobs
 
 
 def run_arxiv_search(query: str, max_results: int, sort_by: str) -> list[dict]:
@@ -86,6 +159,43 @@ class ArxivSearchAPIView(APIView):
                 "results": result_serializer.data,
             }
         )
+
+
+class PaperSaveAPIView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        request_serializer = PaperSaveRequestSerializer(data=request.data)
+        request_serializer.is_valid(raise_exception=True)
+        params = request_serializer.validated_data
+
+        try:
+            save_message, jobs = save_papers_and_create_jobs(
+                params["papers"],
+                extract_content=params["extract_content"],
+            )
+        except Exception as exc:
+            return Response(
+                {"detail": f"논문 저장 중 오류가 발생했습니다: {exc}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+        return Response(
+            {
+                "message": save_message,
+                "jobs": ProcessingJobSerializer(jobs, many=True).data,
+            },
+            status=(
+                status.HTTP_202_ACCEPTED
+                if jobs
+                else status.HTTP_200_OK
+            ),
+        )
+
+
+class ProcessingJobDetailAPIView(RetrieveAPIView):
+    serializer_class = ProcessingJobSerializer
+    queryset = ProcessingJob.objects.select_related("paper")
 
 
 def paper_api_queryset():
