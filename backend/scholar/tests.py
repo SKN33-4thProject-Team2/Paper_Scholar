@@ -933,3 +933,103 @@ class PaperQuestionAPITest(APITestCase):
         self.assertIn("retrieval augmented", answerer.paper["method"])
         self.assertEqual(result["sources"][1]["index"], 2)
         self.assertEqual(result["model"], "fake-model")
+
+
+class PaperWorkflowIntegrationTest(APITestCase):
+    @patch("scholar.services.rag_service.answer_paper_question")
+    @patch("scholar.views.enqueue_translation_job")
+    @patch("scholar.views.enqueue_summary_job")
+    def test_artifact_generation_and_question_workflow(
+        self,
+        summary_enqueue_mock,
+        translation_enqueue_mock,
+        answer_mock,
+    ):
+        paper = Paper.objects.create(
+            arxiv_id="2604.00001",
+            title="Integrated workflow paper",
+            authors=["Workflow Author"],
+            abstract="Workflow abstract",
+        )
+        PaperSection.objects.create(
+            paper=paper,
+            section_order=1,
+            section_title="Method",
+            section_text="Grounded workflow evidence.",
+        )
+
+        detail_response = self.client.get(
+            reverse(
+                "scholar:paper-detail",
+                kwargs={"arxiv_id": paper.arxiv_id},
+            )
+        )
+        summarize_response = self.client.post(
+            reverse(
+                "scholar:paper-summarize",
+                kwargs={"arxiv_id": paper.arxiv_id},
+            ),
+            {},
+            format="json",
+        )
+        summary = PaperSummary.objects.create(
+            paper=paper,
+            summary_text="Integrated summary",
+            model_name="summary-model",
+            section_count=1,
+            chunk_count=1,
+        )
+        summary_response = self.client.get(
+            reverse(
+                "scholar:paper-summary",
+                kwargs={"arxiv_id": paper.arxiv_id},
+            )
+        )
+        translate_response = self.client.post(
+            reverse(
+                "scholar:paper-translate",
+                kwargs={"arxiv_id": paper.arxiv_id},
+            ),
+            {"target_language": "ko"},
+            format="json",
+        )
+        Translation.objects.create(
+            paper=paper,
+            summary=summary,
+            source_text=summary.summary_text,
+            translated_text="통합 요약",
+            target_language="ko",
+        )
+        translations_response = self.client.get(
+            reverse(
+                "scholar:paper-translations",
+                kwargs={"arxiv_id": paper.arxiv_id},
+            )
+        )
+        answer_mock.return_value = {
+            "arxiv_id": paper.arxiv_id,
+            "question": "핵심 근거는 무엇인가요?",
+            "answer": "본문 근거를 사용합니다.",
+            "sources": [{"index": 1, "text": "Grounded workflow evidence."}],
+            "model": "rag-model",
+        }
+        question_response = self.client.post(
+            reverse(
+                "scholar:paper-question",
+                kwargs={"arxiv_id": paper.arxiv_id},
+            ),
+            {"question": "핵심 근거는 무엇인가요?"},
+            format="json",
+        )
+
+        self.assertEqual(detail_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(detail_response.data["section_count"], 1)
+        self.assertEqual(summarize_response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(summary_response.data["summary_text"], "Integrated summary")
+        self.assertEqual(translate_response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(translations_response.data[0]["translated_text"], "통합 요약")
+        self.assertEqual(question_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(question_response.data["sources"][0]["index"], 1)
+        summary_enqueue_mock.assert_called_once()
+        translation_enqueue_mock.assert_called_once()
+        answer_mock.assert_called_once()
