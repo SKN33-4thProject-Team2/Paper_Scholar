@@ -3,24 +3,17 @@
 from __future__ import annotations
 
 import sqlite3
-import sys
 import time
 from pathlib import Path
 from typing import Any, TypedDict
 
-# 파일을 직접 실행해도 프로젝트의 src 패키지를 찾을 수 있도록 경로를 준비한다.
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
-SRC_ROOT = PROJECT_ROOT / "src"
-if str(SRC_ROOT) not in sys.path:
-    sys.path.insert(0, str(SRC_ROOT))
+import sys
+_SRC_ROOT = Path(__file__).resolve().parents[1]
+if str(_SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SRC_ROOT))
+from agent import DEFAULT_DB_PATH, DEFAULT_MARKDOWN_DIR, DEFAULT_SUMMARY_DB_PATH, PROJECT_ROOT
 
 from tools.summary_tool_v2 import SummaryResult, SummaryTool
-from services.summary_vector_store import ChromaSummaryStore
-
-DEFAULT_DB_PATH = PROJECT_ROOT / "data" / "paper_extract" / "extracted_papers.db"
-
-DEFAULT_SUMMARY_DB_PATH = PROJECT_ROOT / "data" / "paper_summary" / "summary.db"
-DEFAULT_MARKDOWN_DIR = PROJECT_ROOT / "data" / "paper_summary"
 
 
 class SummaryState(TypedDict, total=False):
@@ -73,31 +66,17 @@ def save_summary_as_markdown(summary_db: str | Path, paper_id: str,
     return tool.export_markdown_view(paper_id, output_path)
 
 
-def save_summary_to_chroma(vector_store: ChromaSummaryStore,
-                           result: SummaryResult) -> int:
-    """요약 결과를 data/vector_db의 ChromaDB에 저장한다."""
-    return vector_store.save(
-        paper_id=result.paper_id,
-        title=result.title,
-        source="summary.db",
-        summary_model=result.model,
-        sections={"summary": result.summary_markdown},
-    )
-
-
 class SummaryAgent:
     """DB를 받아 요약·DB 저장·Markdown 추출 후 결과 정보를 전달하는 agent."""
 
     def __init__(self, db_path: str | Path = DEFAULT_DB_PATH,
                  summary_db_path: str | Path = DEFAULT_SUMMARY_DB_PATH,
                  markdown_dir: str | Path = DEFAULT_MARKDOWN_DIR,
-                 provider: str | None = None,
-                 vector_store: ChromaSummaryStore | None = None) -> None:
+                 provider: str | None = None) -> None:
         self.db_path = Path(db_path)
         self.summary_db_path = Path(summary_db_path)
         self.markdown_dir = Path(markdown_dir)
         self.provider = provider
-        self.vector_store = vector_store or ChromaSummaryStore()
 
     def _list_paper_ids(self, tool: SummaryTool) -> list[str]:
         """extracted 또는 paper_sections 구조에서 논문 ID를 가져온다."""
@@ -120,9 +99,8 @@ class SummaryAgent:
             source_db=self.db_path,
             summary_db=self.summary_db_path,
             provider=self.provider,
-            single_call=True,
-            vector_store=self.vector_store,
-            save_vector=False,
+            # 섹션 원문 전체를 문단 청크로 요약한 뒤 최종 통합한다.
+            single_call=False,
         )
         ids = paper_ids or self._list_paper_ids(tool)
         summaries = []
@@ -131,7 +109,6 @@ class SummaryAgent:
             calls_before = tool.generation_calls
             result = tool.summarize(str(paper_id))
             save_summary_to_db(result, self.summary_db_path)
-            vector_document_count = save_summary_to_chroma(self.vector_store, result)
             markdown_path = save_summary_as_markdown(
                 self.summary_db_path, result.paper_id, self.markdown_dir
             )
@@ -139,8 +116,6 @@ class SummaryAgent:
                 "id": result.paper_id, "paper_id": result.paper_id,
                 "title": result.title, "summary_markdown": result.summary_markdown,
                 "summary_db": str(self.summary_db_path),
-                "vector_db": str(PROJECT_ROOT / "data" / "vector_db"),
-                "vector_document_count": vector_document_count,
                 "markdown_path": str(markdown_path), "model": result.model,
                 "source": str(self.db_path),
                 "generation_calls": tool.generation_calls - calls_before,
@@ -169,11 +144,17 @@ summary_node = SummaryAgent()
 
 if __name__ == "__main__":
     # data/paper_extract/extracted_papers.db 전체 논문을 처리하는 간단한 테스트 실행부
+    print("[요약] SummaryAgent 실행을 시작합니다.", flush=True)
+    print("[요약] 모델: qwen3:4b-instruct-2507-q4_K_M", flush=True)
+
+    paper_id = "2410.22997v2"
+    print("[요약] 대상 논문: ",paper_id, flush=True)
     agent = SummaryAgent(
         PROJECT_ROOT / "data" / "paper_extract" / "extracted_papers.db",
         provider="ollama",
     )
-    result = agent.run()
+    print("[요약] dense 핵심 문장 선별 및 전체 4단계 요약 중...", flush=True)
+    result = agent.run(paper_ids=[paper_id])
     print(f"요약 DB 저장 완료: {agent.summary_db_path}")
     print(f"전체 처리 시간: {result['elapsed_seconds']:.2f}초")
     print(f"전체 모델 호출 횟수: {result['generation_calls']}회")
