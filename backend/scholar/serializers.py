@@ -83,3 +83,23 @@ class TranslationSerializer(serializers.ModelSerializer):
             "created_at",
             "updated_at",
         )
+
+
+class ArxivSearchRequestSerializer(serializers.Serializer):
+    query = serializers.CharField(max_length=300, trim_whitespace=True)
+    max_results = serializers.IntegerField(default=10, min_value=1, max_value=15)
+    sort_by = serializers.ChoiceField(
+        choices=(
+            ("r", "관련도순"),
+            ("n", "최신순"),
+        ),
+        default="r",
+    )
+
+
+class ArxivSearchResultSerializer(serializers.Serializer):
+    arxiv_id = serializers.CharField()
+    title = serializers.CharField()
+    authors = serializers.ListField(child=serializers.CharField())
+    abstract = serializers.CharField()
+    pdf_url = serializers.URLField(allow_blank=True)

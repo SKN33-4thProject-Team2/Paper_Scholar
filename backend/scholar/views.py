@@ -4,15 +4,46 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.generics import ListAPIView, RetrieveAPIView
 from rest_framework.permissions import AllowAny
 from rest_framework.response import Response
+from rest_framework import status
+from rest_framework.views import APIView
 
 from .models import Paper, PaperSummary
 from .serializers import (
+    ArxivSearchRequestSerializer,
+    ArxivSearchResultSerializer,
     PaperDetailSerializer,
     PaperListSerializer,
     PaperSectionSerializer,
     PaperSummarySerializer,
     TranslationSerializer,
 )
+
+
+def run_arxiv_search(query: str, max_results: int, sort_by: str) -> list[dict]:
+    """기존 ArxivSearchBot의 제목 검색 기능을 HTTP 계층에서 호출합니다."""
+    from src.feature.search import ArxivSearchBot
+
+    clean_query = query.strip().replace('"', "")
+    bot = ArxivSearchBot()
+    papers = bot.search_papers(
+        final_query=f'ti:"{clean_query}"',
+        sort_by=sort_by,
+        max_results=max_results,
+    )
+    return [
+        {
+            "arxiv_id": paper["id"],
+            "title": paper["title"],
+            "authors": [
+                author.strip()
+                for author in str(paper.get("authors") or "").split(",")
+                if author.strip()
+            ],
+            "abstract": paper.get("summary") or "",
+            "pdf_url": paper.get("pdf_url") or "",
+        }
+        for paper in papers
+    ]
 
 
 @api_view(["GET"])
@@ -24,6 +55,37 @@ def health_check(_request):
             "service": "paper-scholar-api",
         }
     )
+
+
+class ArxivSearchAPIView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        request_serializer = ArxivSearchRequestSerializer(data=request.data)
+        request_serializer.is_valid(raise_exception=True)
+        params = request_serializer.validated_data
+
+        try:
+            results = run_arxiv_search(
+                query=params["query"],
+                max_results=params["max_results"],
+                sort_by=params["sort_by"],
+            )
+        except Exception as exc:
+            return Response(
+                {"detail": f"arXiv 검색 중 오류가 발생했습니다: {exc}"},
+                status=status.HTTP_502_BAD_GATEWAY,
+            )
+
+        result_serializer = ArxivSearchResultSerializer(results, many=True)
+        return Response(
+            {
+                "query": params["query"],
+                "sort_by": params["sort_by"],
+                "count": len(results),
+                "results": result_serializer.data,
+            }
+        )
 
 
 def paper_api_queryset():

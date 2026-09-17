@@ -1,6 +1,7 @@
 from django.urls import path
 
 from .views import (
+    ArxivSearchAPIView,
     PaperDetailAPIView,
     PaperListAPIView,
     PaperSectionsAPIView,
@@ -14,6 +15,7 @@ app_name = "scholar"
 
 urlpatterns = [
     path("health/", health_check, name="health"),
+    path("search/", ArxivSearchAPIView.as_view(), name="arxiv-search"),
     path("papers/", PaperListAPIView.as_view(), name="paper-list"),
     path(
         "papers/<str:arxiv_id>/",

@@ -1,6 +1,7 @@
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
+from unittest.mock import patch
 
 from .models import Paper, PaperSection, PaperSummary, Translation
 
@@ -184,3 +185,72 @@ class PaperAPITest(APITestCase):
                     )
                 )
                 self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+
+class ArxivSearchAPITest(APITestCase):
+    @patch("scholar.views.run_arxiv_search")
+    def test_search_reuses_existing_arxiv_service(self, search_mock):
+        search_mock.return_value = [
+            {
+                "arxiv_id": "1706.03762",
+                "title": "Attention Is All You Need",
+                "authors": ["Ashish Vaswani", "Noam Shazeer"],
+                "abstract": "Transformer abstract",
+                "pdf_url": "https://arxiv.org/pdf/1706.03762",
+            }
+        ]
+
+        response = self.client.post(
+            reverse("scholar:arxiv-search"),
+            {
+                "query": "transformer",
+                "max_results": 5,
+                "sort_by": "n",
+            },
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["count"], 1)
+        self.assertEqual(response.data["results"][0]["arxiv_id"], "1706.03762")
+        self.assertEqual(
+            response.data["results"][0]["authors"],
+            ["Ashish Vaswani", "Noam Shazeer"],
+        )
+        search_mock.assert_called_once_with(
+            query="transformer",
+            max_results=5,
+            sort_by="n",
+        )
+
+    @patch("scholar.views.run_arxiv_search")
+    def test_search_rejects_invalid_parameters(self, search_mock):
+        invalid_requests = (
+            {"query": "", "max_results": 5, "sort_by": "r"},
+            {"query": "transformer", "max_results": 16, "sort_by": "r"},
+            {"query": "transformer", "max_results": 5, "sort_by": "unknown"},
+        )
+
+        for payload in invalid_requests:
+            with self.subTest(payload=payload):
+                response = self.client.post(
+                    reverse("scholar:arxiv-search"),
+                    payload,
+                    format="json",
+                )
+                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+        search_mock.assert_not_called()
+
+    @patch("scholar.views.run_arxiv_search")
+    def test_search_returns_bad_gateway_when_service_fails(self, search_mock):
+        search_mock.side_effect = RuntimeError("temporary failure")
+
+        response = self.client.post(
+            reverse("scholar:arxiv-search"),
+            {"query": "transformer"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_502_BAD_GATEWAY)
+        self.assertIn("temporary failure", response.data["detail"])
