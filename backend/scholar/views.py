@@ -13,7 +13,7 @@ from .jobs import (
     enqueue_summary_job,
     enqueue_translation_job,
 )
-from .models import Paper, PaperSummary, ProcessingJob, Translation
+from .models import LibraryEntry, Paper, PaperSummary, ProcessingJob, Translation
 from .serializers import (
     ArxivSearchRequestSerializer,
     ArxivSearchResultSerializer,
@@ -54,6 +54,7 @@ def save_papers_and_create_jobs(
     papers: list[dict],
     *,
     extract_content: bool,
+    user,
 ) -> tuple[str, list[ProcessingJob]]:
     """기존 저장 흐름으로 메타데이터를 보존하고 추출 작업을 등록합니다."""
     from src.feature.search import ArxivSearchBot
@@ -74,22 +75,29 @@ def save_papers_and_create_jobs(
         extract_content=False,
     )
 
-    if not extract_content:
-        return save_message, []
-
-    jobs = []
+    saved_papers = []
     for paper_data in papers:
         paper = Paper.objects.get(
             arxiv_id=normalize_arxiv_id(paper_data["arxiv_id"])
         )
+        LibraryEntry.objects.get_or_create(user=user, paper=paper)
+        saved_papers.append(paper)
+
+    if not extract_content:
+        return save_message, []
+
+    jobs = []
+    for paper in saved_papers:
         if paper.sections.exists():
             job = paper.processing_jobs.filter(
                 job_type=ProcessingJob.JobType.EXTRACT,
                 status=ProcessingJob.Status.COMPLETED,
+                user=user,
             ).first()
             if job is None:
                 now = timezone.now()
                 job = ProcessingJob.objects.create(
+                    user=user,
                     paper=paper,
                     job_type=ProcessingJob.JobType.EXTRACT,
                     status=ProcessingJob.Status.COMPLETED,
@@ -108,6 +116,7 @@ def save_papers_and_create_jobs(
             ).first()
             if job is None:
                 job = ProcessingJob.objects.create(
+                    user=user,
                     paper=paper,
                     job_type=ProcessingJob.JobType.EXTRACT,
                     status=ProcessingJob.Status.PENDING,
@@ -158,7 +167,7 @@ def health_check(_request):
 
 
 class ArxivSearchAPIView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         request_serializer = ArxivSearchRequestSerializer(data=request.data)
@@ -189,7 +198,7 @@ class ArxivSearchAPIView(APIView):
 
 
 class PaperSaveAPIView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request):
         request_serializer = PaperSaveRequestSerializer(data=request.data)
@@ -200,6 +209,7 @@ class PaperSaveAPIView(APIView):
             save_message, jobs = save_papers_and_create_jobs(
                 params["papers"],
                 extract_content=params["extract_content"],
+                user=request.user,
             )
         except Exception as exc:
             return Response(
@@ -222,13 +232,20 @@ class PaperSaveAPIView(APIView):
 
 class ProcessingJobDetailAPIView(RetrieveAPIView):
     serializer_class = ProcessingJobSerializer
-    queryset = ProcessingJob.objects.select_related("paper")
+
+    def get_queryset(self):
+        return ProcessingJob.objects.select_related("paper").filter(
+            paper__library_entries__user=self.request.user
+        )
 
 
-def paper_api_queryset():
+def paper_api_queryset(user=None):
     """목록과 상세 API가 공유하는 집계 포함 Paper QuerySet입니다."""
+    queryset = Paper.objects.all()
+    if user is not None:
+        queryset = queryset.filter(library_entries__user=user)
     return (
-        Paper.objects.annotate(
+        queryset.annotate(
             api_section_count=Count("sections", distinct=True),
             api_translation_count=Count("translations", distinct=True),
             api_has_summary=Exists(
@@ -243,7 +260,7 @@ class PaperListAPIView(ListAPIView):
     serializer_class = PaperListSerializer
 
     def get_queryset(self):
-        return paper_api_queryset()
+        return paper_api_queryset(self.request.user)
 
 
 class PaperDetailAPIView(RetrieveAPIView):
@@ -252,7 +269,7 @@ class PaperDetailAPIView(RetrieveAPIView):
     lookup_url_kwarg = "arxiv_id"
 
     def get_queryset(self):
-        return paper_api_queryset()
+        return paper_api_queryset(self.request.user)
 
 
 class PaperSectionsAPIView(ListAPIView):
@@ -263,6 +280,7 @@ class PaperSectionsAPIView(ListAPIView):
         paper = get_object_or_404(
             Paper.objects.prefetch_related("sections"),
             arxiv_id=self.kwargs["arxiv_id"],
+            library_entries__user=self.request.user,
         )
         return paper.sections.all()
 
@@ -274,17 +292,22 @@ class PaperSummaryAPIView(RetrieveAPIView):
         return get_object_or_404(
             PaperSummary.objects.select_related("paper"),
             paper__arxiv_id=self.kwargs["arxiv_id"],
+            paper__library_entries__user=self.request.user,
         )
 
 
 class PaperSummarizeAPIView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request, arxiv_id: str):
         request_serializer = PaperSummarizeRequestSerializer(data=request.data)
         request_serializer.is_valid(raise_exception=True)
         force = request_serializer.validated_data["force"]
-        paper = get_object_or_404(Paper, arxiv_id=arxiv_id)
+        paper = get_object_or_404(
+            Paper,
+            arxiv_id=arxiv_id,
+            library_entries__user=request.user,
+        )
 
         if not paper.sections.exists():
             return Response(
@@ -313,10 +336,12 @@ class PaperSummarizeAPIView(APIView):
             completed_job = paper.processing_jobs.filter(
                 job_type=ProcessingJob.JobType.SUMMARIZE,
                 status=ProcessingJob.Status.COMPLETED,
+                user=request.user,
             ).first()
             if completed_job is None:
                 now = timezone.now()
                 completed_job = ProcessingJob.objects.create(
+                    user=request.user,
                     paper=paper,
                     job_type=ProcessingJob.JobType.SUMMARIZE,
                     status=ProcessingJob.Status.COMPLETED,
@@ -334,6 +359,7 @@ class PaperSummarizeAPIView(APIView):
             )
 
         job = ProcessingJob.objects.create(
+            user=request.user,
             paper=paper,
             job_type=ProcessingJob.JobType.SUMMARIZE,
             status=ProcessingJob.Status.PENDING,
@@ -354,7 +380,11 @@ class PaperTranslationsAPIView(ListAPIView):
     pagination_class = None
 
     def get_queryset(self):
-        paper = get_object_or_404(Paper, arxiv_id=self.kwargs["arxiv_id"])
+        paper = get_object_or_404(
+            Paper,
+            arxiv_id=self.kwargs["arxiv_id"],
+            library_entries__user=self.request.user,
+        )
         queryset = paper.translations.select_related("paper")
 
         translation_type = self.request.query_params.get("type")
@@ -369,13 +399,17 @@ class PaperTranslationsAPIView(ListAPIView):
 
 
 class PaperTranslateAPIView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request, arxiv_id: str):
         request_serializer = PaperTranslateRequestSerializer(data=request.data)
         request_serializer.is_valid(raise_exception=True)
         params = request_serializer.validated_data
-        paper = get_object_or_404(Paper, arxiv_id=arxiv_id)
+        paper = get_object_or_404(
+            Paper,
+            arxiv_id=arxiv_id,
+            library_entries__user=request.user,
+        )
 
         if not PaperSummary.objects.filter(paper=paper).exists():
             return Response(
@@ -408,10 +442,12 @@ class PaperTranslateAPIView(APIView):
             completed_job = paper.processing_jobs.filter(
                 job_type=ProcessingJob.JobType.TRANSLATE,
                 status=ProcessingJob.Status.COMPLETED,
+                user=request.user,
             ).first()
             if completed_job is None:
                 now = timezone.now()
                 completed_job = ProcessingJob.objects.create(
+                    user=request.user,
                     paper=paper,
                     job_type=ProcessingJob.JobType.TRANSLATE,
                     status=ProcessingJob.Status.COMPLETED,
@@ -429,6 +465,7 @@ class PaperTranslateAPIView(APIView):
             )
 
         job = ProcessingJob.objects.create(
+            user=request.user,
             paper=paper,
             job_type=ProcessingJob.JobType.TRANSLATE,
             status=ProcessingJob.Status.PENDING,
@@ -445,7 +482,7 @@ class PaperTranslateAPIView(APIView):
 
 
 class PaperQuestionAPIView(APIView):
-    permission_classes = [AllowAny]
+    permission_classes = [IsAuthenticated]
 
     def post(self, request, arxiv_id: str):
         request_serializer = PaperQuestionRequestSerializer(data=request.data)
@@ -453,6 +490,7 @@ class PaperQuestionAPIView(APIView):
         paper = get_object_or_404(
             Paper.objects.prefetch_related("sections", "translations"),
             arxiv_id=arxiv_id,
+            library_entries__user=request.user,
         )
         if not paper.sections.exists():
             return Response(

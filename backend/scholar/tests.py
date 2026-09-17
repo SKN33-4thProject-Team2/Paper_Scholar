@@ -5,6 +5,7 @@ from rest_framework.test import APITestCase
 from unittest.mock import patch
 
 from .models import (
+    LibraryEntry,
     Paper,
     PaperSection,
     PaperSummary,
@@ -92,7 +93,23 @@ class AuthenticationAPITest(APITestCase):
         self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
 
 
-class PaperAPITest(APITestCase):
+class AuthenticatedAPITestCase(APITestCase):
+    def setUp(self):
+        super().setUp()
+        self.user = User.objects.create_user(
+            username="authenticated-test-user",
+            password="StrongPass!2468",
+        )
+        self.client.force_authenticate(self.user)
+        for paper in Paper.objects.all():
+            LibraryEntry.objects.get_or_create(user=self.user, paper=paper)
+
+    def add_to_library(self, paper):
+        LibraryEntry.objects.get_or_create(user=self.user, paper=paper)
+        return paper
+
+
+class PaperAPITest(AuthenticatedAPITestCase):
     @classmethod
     def setUpTestData(cls):
         cls.paper = Paper.objects.create(
@@ -273,7 +290,7 @@ class PaperAPITest(APITestCase):
                 self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
 
-class ArxivSearchAPITest(APITestCase):
+class ArxivSearchAPITest(AuthenticatedAPITestCase):
     @patch("scholar.views.run_arxiv_search")
     def test_search_reuses_existing_arxiv_service(self, search_mock):
         search_mock.return_value = [
@@ -342,8 +359,9 @@ class ArxivSearchAPITest(APITestCase):
         self.assertIn("temporary failure", response.data["detail"])
 
 
-class PaperSaveAPITest(APITestCase):
+class PaperSaveAPITest(AuthenticatedAPITestCase):
     def setUp(self):
+        super().setUp()
         self.payload = {
             "papers": [
                 {
@@ -389,6 +407,7 @@ class PaperSaveAPITest(APITestCase):
         save_mock.assert_called_once_with(
             self.payload["papers"],
             extract_content=True,
+            user=self.user,
         )
 
     @patch("scholar.views.save_papers_and_create_jobs")
@@ -407,6 +426,7 @@ class PaperSaveAPITest(APITestCase):
         save_mock.assert_called_once_with(
             self.payload["papers"],
             extract_content=False,
+            user=self.user,
         )
 
     @patch("scholar.views.save_papers_and_create_jobs")
@@ -462,6 +482,7 @@ class PaperSaveAPITest(APITestCase):
             progress_current=0,
             progress_total=1,
         )
+        self.add_to_library(paper)
 
         response = self.client.get(
             reverse(
@@ -505,14 +526,20 @@ class PaperSaveAPITest(APITestCase):
         _, first_jobs = save_papers_and_create_jobs(
             self.payload["papers"],
             extract_content=True,
+            user=self.user,
         )
         _, second_jobs = save_papers_and_create_jobs(
             self.payload["papers"],
             extract_content=True,
+            user=self.user,
         )
 
         self.assertEqual(first_jobs[0].id, second_jobs[0].id)
         self.assertEqual(first_jobs[0].status, ProcessingJob.Status.PENDING)
+        self.assertEqual(first_jobs[0].user, self.user)
+        self.assertTrue(
+            LibraryEntry.objects.filter(user=self.user, paper__arxiv_id="1706.03762").exists()
+        )
         enqueue_mock.assert_called_once_with(first_jobs[0].id)
 
     @patch("scholar.views.enqueue_extraction_job")
@@ -540,6 +567,7 @@ class PaperSaveAPITest(APITestCase):
         _, jobs = save_papers_and_create_jobs(
             self.payload["papers"],
             extract_content=True,
+            user=self.user,
         )
 
         self.assertEqual(jobs[0].status, ProcessingJob.Status.COMPLETED)
@@ -595,7 +623,7 @@ class PaperSaveAPITest(APITestCase):
         self.assertIsNotNone(job.completed_at)
 
 
-class DjangoPaperRepositoryTest(APITestCase):
+class DjangoPaperRepositoryTest(AuthenticatedAPITestCase):
     @classmethod
     def setUpTestData(cls):
         Paper.objects.create(
@@ -637,8 +665,9 @@ class DjangoPaperRepositoryTest(APITestCase):
         self.assertEqual(get_papers_by_ids([]), [])
 
 
-class PaperSummarizeAPITest(APITestCase):
+class PaperSummarizeAPITest(AuthenticatedAPITestCase):
     def setUp(self):
+        super().setUp()
         self.paper = Paper.objects.create(
             arxiv_id="2601.00001",
             title="Summary API paper",
@@ -650,6 +679,7 @@ class PaperSummarizeAPITest(APITestCase):
             section_title="Introduction",
             section_text="Summary source body",
         )
+        self.add_to_library(self.paper)
         self.url = reverse(
             "scholar:paper-summarize",
             kwargs={"arxiv_id": self.paper.arxiv_id},
@@ -713,6 +743,7 @@ class PaperSummarizeAPITest(APITestCase):
             title="Empty paper",
             authors=[],
         )
+        self.add_to_library(empty_paper)
         response = self.client.post(
             reverse(
                 "scholar:paper-summarize",
@@ -769,8 +800,9 @@ class PaperSummarizeAPITest(APITestCase):
         self.assertEqual(job.error_message, "summary failed")
 
 
-class PaperTranslateAPITest(APITestCase):
+class PaperTranslateAPITest(AuthenticatedAPITestCase):
     def setUp(self):
+        super().setUp()
         self.paper = Paper.objects.create(
             arxiv_id="2602.00001",
             title="Translation API paper",
@@ -783,6 +815,7 @@ class PaperTranslateAPITest(APITestCase):
             section_count=1,
             chunk_count=1,
         )
+        self.add_to_library(self.paper)
         self.url = reverse(
             "scholar:paper-translate",
             kwargs={"arxiv_id": self.paper.arxiv_id},
@@ -906,8 +939,9 @@ class PaperTranslateAPITest(APITestCase):
         self.assertEqual(job.error_message, "translation failed")
 
 
-class PaperQuestionAPITest(APITestCase):
+class PaperQuestionAPITest(AuthenticatedAPITestCase):
     def setUp(self):
+        super().setUp()
         self.paper = Paper.objects.create(
             arxiv_id="2603.00001",
             title="RAG API paper",
@@ -920,6 +954,7 @@ class PaperQuestionAPITest(APITestCase):
             section_title="Method",
             section_text="The paper uses retrieval augmented generation.",
         )
+        self.add_to_library(self.paper)
         self.url = reverse(
             "scholar:paper-question",
             kwargs={"arxiv_id": self.paper.arxiv_id},
@@ -961,6 +996,7 @@ class PaperQuestionAPITest(APITestCase):
             title="Empty RAG paper",
             authors=[],
         )
+        self.add_to_library(empty_paper)
         empty_response = self.client.post(
             reverse(
                 "scholar:paper-question",
@@ -1015,7 +1051,105 @@ class PaperQuestionAPITest(APITestCase):
         self.assertEqual(result["model"], "fake-model")
 
 
-class PaperWorkflowIntegrationTest(APITestCase):
+class PersonalLibraryAPITest(APITestCase):
+    def setUp(self):
+        self.user_a = User.objects.create_user(
+            username="reader-a",
+            password="StrongPass!2468",
+        )
+        self.user_b = User.objects.create_user(
+            username="reader-b",
+            password="StrongPass!2468",
+        )
+        self.shared_paper = Paper.objects.create(
+            arxiv_id="2605.00001",
+            title="Shared artifact paper",
+            authors=["Shared Author"],
+        )
+        self.private_paper = Paper.objects.create(
+            arxiv_id="2605.00002",
+            title="Reader A paper",
+            authors=["Private Author"],
+        )
+        PaperSection.objects.create(
+            paper=self.shared_paper,
+            section_order=1,
+            section_title="Method",
+            section_text="Shared section",
+        )
+        PaperSummary.objects.create(
+            paper=self.shared_paper,
+            summary_text="Shared summary",
+            model_name="test-model",
+        )
+        LibraryEntry.objects.create(user=self.user_a, paper=self.shared_paper)
+        LibraryEntry.objects.create(user=self.user_b, paper=self.shared_paper)
+        LibraryEntry.objects.create(user=self.user_a, paper=self.private_paper)
+
+    def test_anonymous_user_cannot_access_library_or_search(self):
+        list_response = self.client.get(reverse("scholar:paper-list"))
+        search_response = self.client.post(
+            reverse("scholar:arxiv-search"),
+            {"query": "transformer"},
+            format="json",
+        )
+
+        self.assertEqual(list_response.status_code, status.HTTP_401_UNAUTHORIZED)
+        self.assertEqual(search_response.status_code, status.HTTP_401_UNAUTHORIZED)
+
+    def test_each_user_sees_only_their_library(self):
+        self.client.force_authenticate(self.user_a)
+        user_a_response = self.client.get(reverse("scholar:paper-list"))
+        self.client.force_authenticate(self.user_b)
+        user_b_response = self.client.get(reverse("scholar:paper-list"))
+
+        self.assertEqual(user_a_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            {paper["arxiv_id"] for paper in user_a_response.data["results"]},
+            {self.shared_paper.arxiv_id, self.private_paper.arxiv_id},
+        )
+        self.assertEqual(
+            [paper["arxiv_id"] for paper in user_b_response.data["results"]],
+            [self.shared_paper.arxiv_id],
+        )
+
+    def test_artifacts_are_shared_only_with_library_members(self):
+        summary_url = reverse(
+            "scholar:paper-summary",
+            kwargs={"arxiv_id": self.shared_paper.arxiv_id},
+        )
+        private_detail_url = reverse(
+            "scholar:paper-detail",
+            kwargs={"arxiv_id": self.private_paper.arxiv_id},
+        )
+
+        self.client.force_authenticate(self.user_b)
+        shared_summary_response = self.client.get(summary_url)
+        private_detail_response = self.client.get(private_detail_url)
+
+        self.assertEqual(shared_summary_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(shared_summary_response.data["summary_text"], "Shared summary")
+        self.assertEqual(private_detail_response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_job_status_requires_membership_in_the_paper(self):
+        job = ProcessingJob.objects.create(
+            user=self.user_a,
+            paper=self.private_paper,
+            job_type=ProcessingJob.JobType.EXTRACT,
+            status=ProcessingJob.Status.RUNNING,
+        )
+        url = reverse("scholar:processing-job-detail", kwargs={"pk": job.id})
+
+        self.client.force_authenticate(self.user_b)
+        denied_response = self.client.get(url)
+        self.client.force_authenticate(self.user_a)
+        allowed_response = self.client.get(url)
+
+        self.assertEqual(denied_response.status_code, status.HTTP_404_NOT_FOUND)
+        self.assertEqual(allowed_response.status_code, status.HTTP_200_OK)
+
+
+class PaperWorkflowIntegrationTest(AuthenticatedAPITestCase):
     @patch("scholar.services.rag_service.answer_paper_question")
     @patch("scholar.views.enqueue_translation_job")
     @patch("scholar.views.enqueue_summary_job")
@@ -1037,6 +1171,7 @@ class PaperWorkflowIntegrationTest(APITestCase):
             section_title="Method",
             section_text="Grounded workflow evidence.",
         )
+        self.add_to_library(paper)
 
         detail_response = self.client.get(
             reverse(
