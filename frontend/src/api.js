@@ -47,3 +47,18 @@ export function searchArxiv(params) {
     body: JSON.stringify(params),
   })
 }
+
+export function savePapers(papers, extractContent = true) {
+  return request('/papers/save/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      papers,
+      extract_content: extractContent,
+    }),
+  })
+}
+
+export function getProcessingJob(jobId) {
+  return request(`/jobs/${encodeURIComponent(jobId)}/`)
+}

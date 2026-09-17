@@ -196,7 +196,7 @@ function App() {
           </section>
         </div>
       ) : (
-        <SearchPanel />
+        <SearchPanel onSaved={loadPapers} />
       )}
     </main>
   )
