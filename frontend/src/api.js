@@ -60,6 +60,17 @@ export function getPaperTranslations(arxivId) {
   return request(`/papers/${encodeURIComponent(arxivId)}/translations/`)
 }
 
+export function translatePaper(arxivId, targetLanguage = 'ko', force = false) {
+  return request(`/papers/${encodeURIComponent(arxivId)}/translate/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      target_language: targetLanguage,
+      force,
+    }),
+  })
+}
+
 export function searchArxiv(params) {
   return request('/search/', {
     method: 'POST',

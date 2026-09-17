@@ -5,6 +5,7 @@ import {
   getPaperSummary,
   getPaperTranslations,
   summarizePaper,
+  translatePaper,
 } from './api'
 
 const EMPTY_ARTIFACTS = {
@@ -110,28 +111,62 @@ function SummaryTab({ summary, job, canSummarize, onGenerate }) {
   )
 }
 
-function TranslationsTab({ translations }) {
-  if (translations.length === 0) {
-    return <div className="artifact-empty">아직 생성된 번역 결과가 없습니다.</div>
+function TranslationsTab({ translations, job, canTranslate, onGenerate }) {
+  const isRunning = job?.status === 'pending' || job?.status === 'running'
+  const statusLabels = {
+    pending: '번역 대기 중',
+    running: '번역 생성 중',
+    completed: '번역 생성 완료',
+    failed: '번역 생성 실패',
   }
-
   return (
-    <div className="translation-list">
-      {translations.map((translation) => (
-        <section className="translation-card" key={translation.id}>
-          <div className="artifact-meta">
-            <strong>
-              {TRANSLATION_TYPE_LABELS[translation.translation_type]
-                || translation.translation_type}
-            </strong>
-            <span>
-              {translation.source_language} → {translation.target_language}
-            </span>
-            {translation.model_name && <span>모델 {translation.model_name}</span>}
-          </div>
-          <p>{translation.translated_text}</p>
-        </section>
-      ))}
+    <div className="translation-tab">
+      <div className="artifact-actions">
+        <div>
+          <strong>{job ? statusLabels[job.status] : '요약 번역'}</strong>
+          <span>
+            {job?.status === 'failed'
+              ? job.error_message
+              : '최종 논문 요약을 한국어로 번역합니다.'}
+          </span>
+        </div>
+        <button
+          type="button"
+          disabled={!canTranslate || isRunning}
+          onClick={onGenerate}
+        >
+          {isRunning
+            ? '번역 중…'
+            : translations.length > 0
+              ? '번역 다시 생성'
+              : '한국어 번역 생성'}
+        </button>
+      </div>
+      {!canTranslate && (
+        <div className="artifact-empty">번역하려면 먼저 요약을 생성해야 합니다.</div>
+      )}
+      {canTranslate && translations.length === 0 && !isRunning && (
+        <div className="artifact-empty">아직 생성된 번역 결과가 없습니다.</div>
+      )}
+      {translations.length > 0 && (
+        <div className="translation-list">
+          {translations.map((translation) => (
+            <section className="translation-card" key={translation.id}>
+              <div className="artifact-meta">
+                <strong>
+                  {TRANSLATION_TYPE_LABELS[translation.translation_type]
+                    || translation.translation_type}
+                </strong>
+                <span>
+                  {translation.source_language} → {translation.target_language}
+                </span>
+                {translation.model_name && <span>모델 {translation.model_name}</span>}
+              </div>
+              <p>{translation.translated_text}</p>
+            </section>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
@@ -142,12 +177,15 @@ export default function PaperDetail({ paper, loading }) {
   const [artifactLoading, setArtifactLoading] = useState(false)
   const [artifactError, setArtifactError] = useState('')
   const [summaryJob, setSummaryJob] = useState(null)
+  const [translationJob, setTranslationJob] = useState(null)
 
   const paperArtifacts = artifacts.paperId === paper?.arxiv_id
     ? artifacts
     : EMPTY_ARTIFACTS
   const summaryJobId = summaryJob?.id
   const summaryJobStatus = summaryJob?.status
+  const translationJobId = translationJob?.id
+  const translationJobStatus = translationJob?.status
 
   useEffect(() => {
     if (!summaryJobId || !['pending', 'running'].includes(summaryJobStatus)) {
@@ -181,6 +219,42 @@ export default function PaperDetail({ paper, loading }) {
       window.clearInterval(timer)
     }
   }, [paper?.arxiv_id, summaryJobId, summaryJobStatus])
+
+  useEffect(() => {
+    if (
+      !translationJobId
+      || !['pending', 'running'].includes(translationJobStatus)
+    ) {
+      return undefined
+    }
+
+    let cancelled = false
+    const pollTranslationJob = async () => {
+      try {
+        const job = await getProcessingJob(translationJobId)
+        if (cancelled) return
+        setTranslationJob(job)
+        if (job.status === 'completed') {
+          const translations = await getPaperTranslations(paper.arxiv_id)
+          if (cancelled) return
+          setArtifacts((current) => ({
+            ...(current.paperId === paper.arxiv_id ? current : EMPTY_ARTIFACTS),
+            paperId: paper.arxiv_id,
+            translations,
+          }))
+        }
+      } catch (requestError) {
+        if (!cancelled) setArtifactError(requestError.message)
+      }
+    }
+
+    const timer = window.setInterval(pollTranslationJob, 2000)
+    pollTranslationJob()
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [paper?.arxiv_id, translationJobId, translationJobStatus])
 
   const selectTab = async (tabId) => {
     setActiveTab(tabId)
@@ -224,6 +298,32 @@ export default function PaperDetail({ paper, loading }) {
           ...(current.paperId === paper.arxiv_id ? current : EMPTY_ARTIFACTS),
           paperId: paper.arxiv_id,
           summary,
+        }))
+      }
+    } catch (requestError) {
+      setArtifactError(requestError.message)
+    }
+  }
+
+  const generateTranslation = async () => {
+    const hasTranslation = Boolean(
+      paper.translation_count > 0
+      || paperArtifacts.translations?.length > 0
+    )
+    setArtifactError('')
+    try {
+      const response = await translatePaper(
+        paper.arxiv_id,
+        'ko',
+        hasTranslation,
+      )
+      setTranslationJob(response.job)
+      if (response.job.status === 'completed') {
+        const translations = await getPaperTranslations(paper.arxiv_id)
+        setArtifacts((current) => ({
+          ...(current.paperId === paper.arxiv_id ? current : EMPTY_ARTIFACTS),
+          paperId: paper.arxiv_id,
+          translations,
         }))
       }
     } catch (requestError) {
@@ -294,7 +394,12 @@ export default function PaperDetail({ paper, loading }) {
           />
         )}
         {!artifactLoading && !artifactError && activeTab === 'translations' && (
-          <TranslationsTab translations={paperArtifacts.translations || []} />
+          <TranslationsTab
+            translations={paperArtifacts.translations || []}
+            job={translationJob}
+            canTranslate={Boolean(paper.has_summary || paperArtifacts.summary)}
+            onGenerate={generateTranslation}
+          />
         )}
       </div>
     </article>

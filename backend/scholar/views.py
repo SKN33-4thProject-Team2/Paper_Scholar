@@ -8,8 +8,12 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.views import APIView
 
-from .jobs import enqueue_extraction_job, enqueue_summary_job
-from .models import Paper, PaperSummary, ProcessingJob
+from .jobs import (
+    enqueue_extraction_job,
+    enqueue_summary_job,
+    enqueue_translation_job,
+)
+from .models import Paper, PaperSummary, ProcessingJob, Translation
 from .serializers import (
     ArxivSearchRequestSerializer,
     ArxivSearchResultSerializer,
@@ -19,6 +23,7 @@ from .serializers import (
     PaperSaveRequestSerializer,
     PaperSummarizeRequestSerializer,
     PaperSummarySerializer,
+    PaperTranslateRequestSerializer,
     ProcessingJobSerializer,
     TranslationSerializer,
 )
@@ -340,3 +345,79 @@ class PaperTranslationsAPIView(ListAPIView):
             queryset = queryset.filter(target_language=target_language)
 
         return queryset
+
+
+class PaperTranslateAPIView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request, arxiv_id: str):
+        request_serializer = PaperTranslateRequestSerializer(data=request.data)
+        request_serializer.is_valid(raise_exception=True)
+        params = request_serializer.validated_data
+        paper = get_object_or_404(Paper, arxiv_id=arxiv_id)
+
+        if not PaperSummary.objects.filter(paper=paper).exists():
+            return Response(
+                {"detail": "번역할 요약이 없습니다. 먼저 요약을 생성해 주세요."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        active_job = paper.processing_jobs.filter(
+            job_type=ProcessingJob.JobType.TRANSLATE,
+            status__in=(
+                ProcessingJob.Status.PENDING,
+                ProcessingJob.Status.RUNNING,
+            ),
+        ).first()
+        if active_job is not None:
+            return Response(
+                {
+                    "message": "이미 번역 작업이 진행 중입니다.",
+                    "job": ProcessingJobSerializer(active_job).data,
+                },
+                status=status.HTTP_202_ACCEPTED,
+            )
+
+        existing_translation = Translation.objects.filter(
+            paper=paper,
+            translation_type=Translation.TranslationType.SUMMARY,
+            target_language=params["target_language"],
+        ).first()
+        if existing_translation is not None and not params["force"]:
+            completed_job = paper.processing_jobs.filter(
+                job_type=ProcessingJob.JobType.TRANSLATE,
+                status=ProcessingJob.Status.COMPLETED,
+            ).first()
+            if completed_job is None:
+                now = timezone.now()
+                completed_job = ProcessingJob.objects.create(
+                    paper=paper,
+                    job_type=ProcessingJob.JobType.TRANSLATE,
+                    status=ProcessingJob.Status.COMPLETED,
+                    progress_current=1,
+                    progress_total=1,
+                    model_name=existing_translation.model_name,
+                    started_at=now,
+                    completed_at=now,
+                )
+            return Response(
+                {
+                    "message": "이미 생성된 번역이 있습니다.",
+                    "job": ProcessingJobSerializer(completed_job).data,
+                }
+            )
+
+        job = ProcessingJob.objects.create(
+            paper=paper,
+            job_type=ProcessingJob.JobType.TRANSLATE,
+            status=ProcessingJob.Status.PENDING,
+            progress_total=1,
+        )
+        enqueue_translation_job(job.id)
+        return Response(
+            {
+                "message": "번역 작업을 시작했습니다.",
+                "job": ProcessingJobSerializer(job).data,
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )

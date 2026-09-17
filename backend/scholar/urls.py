@@ -9,6 +9,7 @@ from .views import (
     PaperSummaryAPIView,
     PaperSummarizeAPIView,
     PaperTranslationsAPIView,
+    PaperTranslateAPIView,
     ProcessingJobDetailAPIView,
     health_check,
 )
@@ -50,5 +51,10 @@ urlpatterns = [
         "papers/<str:arxiv_id>/translations/",
         PaperTranslationsAPIView.as_view(),
         name="paper-translations",
+    ),
+    path(
+        "papers/<str:arxiv_id>/translate/",
+        PaperTranslateAPIView.as_view(),
+        name="paper-translate",
     ),
 ]

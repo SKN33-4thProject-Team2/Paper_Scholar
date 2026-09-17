@@ -687,3 +687,140 @@ class PaperSummarizeAPITest(APITestCase):
 
         self.assertEqual(job.status, ProcessingJob.Status.FAILED)
         self.assertEqual(job.error_message, "summary failed")
+
+
+class PaperTranslateAPITest(APITestCase):
+    def setUp(self):
+        self.paper = Paper.objects.create(
+            arxiv_id="2602.00001",
+            title="Translation API paper",
+            authors=["Test Author"],
+        )
+        self.summary = PaperSummary.objects.create(
+            paper=self.paper,
+            summary_text="English summary",
+            model_name="summary-model",
+            section_count=1,
+            chunk_count=1,
+        )
+        self.url = reverse(
+            "scholar:paper-translate",
+            kwargs={"arxiv_id": self.paper.arxiv_id},
+        )
+
+    @patch("scholar.views.enqueue_translation_job")
+    def test_translate_creates_pending_job(self, enqueue_mock):
+        response = self.client.post(
+            self.url,
+            {"target_language": "ko"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        job = ProcessingJob.objects.get(pk=response.data["job"]["id"])
+        self.assertEqual(job.job_type, ProcessingJob.JobType.TRANSLATE)
+        self.assertEqual(job.status, ProcessingJob.Status.PENDING)
+        enqueue_mock.assert_called_once_with(job.id)
+
+    @patch("scholar.views.enqueue_translation_job")
+    def test_translate_reuses_active_job(self, enqueue_mock):
+        active_job = ProcessingJob.objects.create(
+            paper=self.paper,
+            job_type=ProcessingJob.JobType.TRANSLATE,
+            status=ProcessingJob.Status.RUNNING,
+            progress_total=1,
+        )
+
+        response = self.client.post(self.url, {}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(response.data["job"]["id"], active_job.id)
+        enqueue_mock.assert_not_called()
+
+    @patch("scholar.views.enqueue_translation_job")
+    def test_existing_translation_requires_force_to_regenerate(self, enqueue_mock):
+        Translation.objects.create(
+            paper=self.paper,
+            summary=self.summary,
+            translation_type=Translation.TranslationType.SUMMARY,
+            source_text="English summary",
+            translated_text="한국어 요약",
+            target_language="ko",
+            model_name="translation-model",
+            chunk_count=1,
+        )
+
+        existing_response = self.client.post(self.url, {}, format="json")
+        forced_response = self.client.post(
+            self.url,
+            {"force": True},
+            format="json",
+        )
+
+        self.assertEqual(existing_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            existing_response.data["job"]["status"],
+            ProcessingJob.Status.COMPLETED,
+        )
+        self.assertEqual(forced_response.status_code, status.HTTP_202_ACCEPTED)
+        enqueue_mock.assert_called_once_with(forced_response.data["job"]["id"])
+
+    @patch("scholar.views.enqueue_translation_job")
+    def test_translate_requires_summary_and_supported_language(self, enqueue_mock):
+        self.summary.delete()
+        missing_response = self.client.post(self.url, {}, format="json")
+        invalid_response = self.client.post(
+            self.url,
+            {"target_language": "ja"},
+            format="json",
+        )
+
+        self.assertEqual(missing_response.status_code, status.HTTP_409_CONFLICT)
+        self.assertEqual(invalid_response.status_code, status.HTTP_400_BAD_REQUEST)
+        enqueue_mock.assert_not_called()
+
+    @patch("scholar.services.translation_service.generate_summary_translation")
+    def test_translation_worker_completes_job(self, generate_mock):
+        from .jobs import _run_translation_job
+
+        translation = Translation.objects.create(
+            paper=self.paper,
+            summary=self.summary,
+            translation_type=Translation.TranslationType.SUMMARY,
+            source_text="English summary",
+            translated_text="한국어 요약",
+            target_language="ko",
+            model_name="translation-model",
+            chunk_count=1,
+        )
+        generate_mock.return_value = translation
+        job = ProcessingJob.objects.create(
+            paper=self.paper,
+            job_type=ProcessingJob.JobType.TRANSLATE,
+            progress_total=1,
+        )
+
+        _run_translation_job(job.id)
+        job.refresh_from_db()
+
+        generate_mock.assert_called_once_with(self.paper)
+        self.assertEqual(job.status, ProcessingJob.Status.COMPLETED)
+        self.assertEqual(job.progress_current, 1)
+        self.assertEqual(job.model_name, "translation-model")
+
+    @patch("scholar.services.translation_service.generate_summary_translation")
+    def test_translation_worker_records_failure(self, generate_mock):
+        from .jobs import _run_translation_job
+
+        generate_mock.side_effect = RuntimeError("translation failed")
+        job = ProcessingJob.objects.create(
+            paper=self.paper,
+            job_type=ProcessingJob.JobType.TRANSLATE,
+            progress_total=1,
+        )
+
+        _run_translation_job(job.id)
+        job.refresh_from_db()
+
+        self.assertEqual(job.status, ProcessingJob.Status.FAILED)
+        self.assertEqual(job.error_message, "translation failed")

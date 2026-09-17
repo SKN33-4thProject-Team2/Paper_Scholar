@@ -122,6 +122,14 @@ class PaperSummarizeRequestSerializer(serializers.Serializer):
     force = serializers.BooleanField(default=False)
 
 
+class PaperTranslateRequestSerializer(serializers.Serializer):
+    target_language = serializers.ChoiceField(
+        choices=(("ko", "한국어"),),
+        default="ko",
+    )
+    force = serializers.BooleanField(default=False)
+
+
 class ProcessingJobSerializer(serializers.ModelSerializer):
     arxiv_id = serializers.CharField(source="paper.arxiv_id", read_only=True)
 
