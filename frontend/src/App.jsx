@@ -2,6 +2,8 @@ import { useCallback, useEffect, useState } from 'react'
 import { getHealth, getPaper, getPapers } from './api'
 import PaperDetail from './PaperDetail'
 import SearchPanel from './SearchPanel'
+import AuthPage from './AuthPage'
+import { useAuth } from './auth-context'
 import './App.css'
 
 function StatusBadge({ children, tone = 'neutral' }) {
@@ -36,9 +38,11 @@ function PaperCard({ paper, isSelected, onSelect }) {
 }
 
 function App() {
+  const { user, loading: authLoading, logout } = useAuth()
   const [activeView, setActiveView] = useState('library')
   const [health, setHealth] = useState('checking')
   const [paperPage, setPaperPage] = useState(null)
+  const [loadedUserId, setLoadedUserId] = useState(null)
   const [selectedId, setSelectedId] = useState(null)
   const [selectedPaper, setSelectedPaper] = useState(null)
   const [loading, setLoading] = useState(true)
@@ -61,11 +65,26 @@ function App() {
     getHealth()
       .then(() => setHealth('online'))
       .catch(() => setHealth('offline'))
-    getPapers()
-      .then((data) => setPaperPage(data))
-      .catch((requestError) => setError(requestError.message))
-      .finally(() => setLoading(false))
   }, [])
+
+  useEffect(() => {
+    if (authLoading || !user) {
+      return
+    }
+
+    getPapers()
+      .then((data) => {
+        setPaperPage(data)
+        setError('')
+      })
+      .catch((requestError) => setError(requestError.message))
+      .finally(() => {
+        setLoadedUserId(user.id)
+        setLoading(false)
+      })
+  }, [authLoading, user])
+
+  const libraryLoading = loading || loadedUserId !== user?.id
 
   const selectPaper = async (arxivId) => {
     setSelectedId(arxivId)
@@ -81,6 +100,13 @@ function App() {
     }
   }
 
+  if (authLoading) {
+    return <div className="auth-loading">로그인 정보를 확인하는 중입니다.</div>
+  }
+  if (!user) {
+    return <AuthPage />
+  }
+
   return (
     <main className="app-shell">
       <header className="app-header">
@@ -93,10 +119,14 @@ function App() {
               : '새 논문을 검색하고 저장할 자료를 살펴봅니다.'}
           </p>
         </div>
-        <StatusBadge tone={health === 'online' ? 'success' : health === 'offline' ? 'danger' : 'neutral'}>
-          <span className="status-dot" />
-          {health === 'online' ? 'API 연결됨' : health === 'offline' ? 'API 연결 실패' : 'API 확인 중'}
-        </StatusBadge>
+        <div className="app-header__account">
+          <StatusBadge tone={health === 'online' ? 'success' : health === 'offline' ? 'danger' : 'neutral'}>
+            <span className="status-dot" />
+            {health === 'online' ? 'API 연결됨' : health === 'offline' ? 'API 연결 실패' : 'API 확인 중'}
+          </StatusBadge>
+          <span><strong>{user.username}</strong>님의 서재</span>
+          <button type="button" onClick={logout}>로그아웃</button>
+        </div>
       </header>
 
       <nav className="view-tabs" aria-label="주요 화면">
@@ -131,12 +161,12 @@ function App() {
             <strong>{paperPage?.count ?? 0}편</strong>
           </div>
 
-          <div className="paper-list" aria-busy={loading}>
-            {loading && <div className="empty-state">논문 목록을 불러오는 중입니다.</div>}
-            {!loading && paperPage?.results.length === 0 && (
+          <div className="paper-list" aria-busy={libraryLoading}>
+            {libraryLoading && <div className="empty-state">논문 목록을 불러오는 중입니다.</div>}
+            {!libraryLoading && paperPage?.results.length === 0 && (
               <div className="empty-state">저장된 논문이 없습니다.</div>
             )}
-            {!loading && paperPage?.results.map((paper) => (
+            {!libraryLoading && paperPage?.results.map((paper) => (
               <PaperCard
                 key={paper.arxiv_id}
                 paper={paper}
@@ -147,10 +177,10 @@ function App() {
           </div>
 
           <nav className="pagination" aria-label="논문 목록 페이지">
-            <button type="button" disabled={!paperPage?.previous || loading} onClick={() => loadPapers(paperPage.previous)}>
+            <button type="button" disabled={!paperPage?.previous || libraryLoading} onClick={() => loadPapers(paperPage.previous)}>
               이전
             </button>
-            <button type="button" disabled={!paperPage?.next || loading} onClick={() => loadPapers(paperPage.next)}>
+            <button type="button" disabled={!paperPage?.next || libraryLoading} onClick={() => loadPapers(paperPage.next)}>
               다음
             </button>
           </nav>
