@@ -8,7 +8,7 @@ from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.views import APIView
 
-from .jobs import enqueue_extraction_job
+from .jobs import enqueue_extraction_job, enqueue_summary_job
 from .models import Paper, PaperSummary, ProcessingJob
 from .serializers import (
     ArxivSearchRequestSerializer,
@@ -17,6 +17,7 @@ from .serializers import (
     PaperListSerializer,
     PaperSectionSerializer,
     PaperSaveRequestSerializer,
+    PaperSummarizeRequestSerializer,
     PaperSummarySerializer,
     ProcessingJobSerializer,
     TranslationSerializer,
@@ -247,6 +248,78 @@ class PaperSummaryAPIView(RetrieveAPIView):
         return get_object_or_404(
             PaperSummary.objects.select_related("paper"),
             paper__arxiv_id=self.kwargs["arxiv_id"],
+        )
+
+
+class PaperSummarizeAPIView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request, arxiv_id: str):
+        request_serializer = PaperSummarizeRequestSerializer(data=request.data)
+        request_serializer.is_valid(raise_exception=True)
+        force = request_serializer.validated_data["force"]
+        paper = get_object_or_404(Paper, arxiv_id=arxiv_id)
+
+        if not paper.sections.exists():
+            return Response(
+                {"detail": "요약할 본문 섹션이 없습니다. 먼저 본문을 추출해 주세요."},
+                status=status.HTTP_409_CONFLICT,
+            )
+
+        active_job = paper.processing_jobs.filter(
+            job_type=ProcessingJob.JobType.SUMMARIZE,
+            status__in=(
+                ProcessingJob.Status.PENDING,
+                ProcessingJob.Status.RUNNING,
+            ),
+        ).first()
+        if active_job is not None:
+            return Response(
+                {
+                    "message": "이미 요약 작업이 진행 중입니다.",
+                    "job": ProcessingJobSerializer(active_job).data,
+                },
+                status=status.HTTP_202_ACCEPTED,
+            )
+
+        existing_summary = PaperSummary.objects.filter(paper=paper).first()
+        if existing_summary is not None and not force:
+            completed_job = paper.processing_jobs.filter(
+                job_type=ProcessingJob.JobType.SUMMARIZE,
+                status=ProcessingJob.Status.COMPLETED,
+            ).first()
+            if completed_job is None:
+                now = timezone.now()
+                completed_job = ProcessingJob.objects.create(
+                    paper=paper,
+                    job_type=ProcessingJob.JobType.SUMMARIZE,
+                    status=ProcessingJob.Status.COMPLETED,
+                    progress_current=1,
+                    progress_total=1,
+                    model_name=existing_summary.model_name,
+                    started_at=now,
+                    completed_at=now,
+                )
+            return Response(
+                {
+                    "message": "이미 생성된 요약이 있습니다.",
+                    "job": ProcessingJobSerializer(completed_job).data,
+                }
+            )
+
+        job = ProcessingJob.objects.create(
+            paper=paper,
+            job_type=ProcessingJob.JobType.SUMMARIZE,
+            status=ProcessingJob.Status.PENDING,
+            progress_total=1,
+        )
+        enqueue_summary_job(job.id)
+        return Response(
+            {
+                "message": "요약 작업을 시작했습니다.",
+                "job": ProcessingJobSerializer(job).data,
+            },
+            status=status.HTTP_202_ACCEPTED,
         )
 
 

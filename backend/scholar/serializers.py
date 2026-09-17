@@ -118,6 +118,10 @@ class PaperSaveRequestSerializer(serializers.Serializer):
         return value
 
 
+class PaperSummarizeRequestSerializer(serializers.Serializer):
+    force = serializers.BooleanField(default=False)
+
+
 class ProcessingJobSerializer(serializers.ModelSerializer):
     arxiv_id = serializers.CharField(source="paper.arxiv_id", read_only=True)
 

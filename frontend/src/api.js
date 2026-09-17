@@ -48,6 +48,14 @@ export function getPaperSummary(arxivId) {
   return request(`/papers/${encodeURIComponent(arxivId)}/summary/`)
 }
 
+export function summarizePaper(arxivId, force = false) {
+  return request(`/papers/${encodeURIComponent(arxivId)}/summarize/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ force }),
+  })
+}
+
 export function getPaperTranslations(arxivId) {
   return request(`/papers/${encodeURIComponent(arxivId)}/translations/`)
 }

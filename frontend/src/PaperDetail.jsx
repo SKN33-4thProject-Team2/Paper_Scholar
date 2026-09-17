@@ -1,8 +1,10 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
+  getProcessingJob,
   getPaperSections,
   getPaperSummary,
   getPaperTranslations,
+  summarizePaper,
 } from './api'
 
 const EMPTY_ARTIFACTS = {
@@ -61,20 +63,50 @@ function SectionsTab({ sections }) {
   )
 }
 
-function SummaryTab({ summary }) {
-  if (!summary) {
-    return <div className="artifact-empty">아직 생성된 논문 요약이 없습니다.</div>
+function SummaryTab({ summary, job, canSummarize, onGenerate }) {
+  const isRunning = job?.status === 'pending' || job?.status === 'running'
+  const statusLabels = {
+    pending: '요약 대기 중',
+    running: '요약 생성 중',
+    completed: '요약 생성 완료',
+    failed: '요약 생성 실패',
   }
-
   return (
-    <section className="summary-card">
-      <div className="artifact-meta">
-        <span>모델 {summary.model_name || '정보 없음'}</span>
-        <span>섹션 {summary.section_count}개</span>
-        <span>청크 {summary.chunk_count}개</span>
+    <div className="summary-tab">
+      <div className="artifact-actions">
+        <div>
+          <strong>{job ? statusLabels[job.status] : '논문 요약'}</strong>
+          <span>
+            {job?.status === 'failed'
+              ? job.error_message
+              : '추출된 본문을 기반으로 최종 요약을 생성합니다.'}
+          </span>
+        </div>
+        <button
+          type="button"
+          disabled={!canSummarize || isRunning}
+          onClick={onGenerate}
+        >
+          {isRunning ? '생성 중…' : summary ? '요약 다시 생성' : '요약 생성'}
+        </button>
       </div>
-      <p>{summary.summary_text}</p>
-    </section>
+      {!canSummarize && (
+        <div className="artifact-empty">요약하려면 먼저 본문을 추출해야 합니다.</div>
+      )}
+      {canSummarize && !summary && !isRunning && (
+        <div className="artifact-empty">아직 생성된 논문 요약이 없습니다.</div>
+      )}
+      {summary && (
+        <section className="summary-card">
+          <div className="artifact-meta">
+            <span>모델 {summary.model_name || '정보 없음'}</span>
+            <span>섹션 {summary.section_count}개</span>
+            <span>청크 {summary.chunk_count}개</span>
+          </div>
+          <p>{summary.summary_text}</p>
+        </section>
+      )}
+    </div>
   )
 }
 
@@ -109,10 +141,46 @@ export default function PaperDetail({ paper, loading }) {
   const [artifacts, setArtifacts] = useState(EMPTY_ARTIFACTS)
   const [artifactLoading, setArtifactLoading] = useState(false)
   const [artifactError, setArtifactError] = useState('')
+  const [summaryJob, setSummaryJob] = useState(null)
 
   const paperArtifacts = artifacts.paperId === paper?.arxiv_id
     ? artifacts
     : EMPTY_ARTIFACTS
+  const summaryJobId = summaryJob?.id
+  const summaryJobStatus = summaryJob?.status
+
+  useEffect(() => {
+    if (!summaryJobId || !['pending', 'running'].includes(summaryJobStatus)) {
+      return undefined
+    }
+
+    let cancelled = false
+    const pollSummaryJob = async () => {
+      try {
+        const job = await getProcessingJob(summaryJobId)
+        if (cancelled) return
+        setSummaryJob(job)
+        if (job.status === 'completed') {
+          const summary = await getPaperSummary(paper.arxiv_id)
+          if (cancelled) return
+          setArtifacts((current) => ({
+            ...(current.paperId === paper.arxiv_id ? current : EMPTY_ARTIFACTS),
+            paperId: paper.arxiv_id,
+            summary,
+          }))
+        }
+      } catch (requestError) {
+        if (!cancelled) setArtifactError(requestError.message)
+      }
+    }
+
+    const timer = window.setInterval(pollSummaryJob, 2000)
+    pollSummaryJob()
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [paper?.arxiv_id, summaryJobId, summaryJobStatus])
 
   const selectTab = async (tabId) => {
     setActiveTab(tabId)
@@ -141,6 +209,25 @@ export default function PaperDetail({ paper, loading }) {
       setArtifactError(requestError.message)
     } finally {
       setArtifactLoading(false)
+    }
+  }
+
+  const generateSummary = async () => {
+    const hasSummary = Boolean(paper.has_summary || paperArtifacts.summary)
+    setArtifactError('')
+    try {
+      const response = await summarizePaper(paper.arxiv_id, hasSummary)
+      setSummaryJob(response.job)
+      if (response.job.status === 'completed') {
+        const summary = await getPaperSummary(paper.arxiv_id)
+        setArtifacts((current) => ({
+          ...(current.paperId === paper.arxiv_id ? current : EMPTY_ARTIFACTS),
+          paperId: paper.arxiv_id,
+          summary,
+        }))
+      }
+    } catch (requestError) {
+      setArtifactError(requestError.message)
     }
   }
 
@@ -199,7 +286,12 @@ export default function PaperDetail({ paper, loading }) {
           <SectionsTab sections={paperArtifacts.sections || []} />
         )}
         {!artifactLoading && !artifactError && activeTab === 'summary' && (
-          <SummaryTab summary={paperArtifacts.summary} />
+          <SummaryTab
+            summary={paperArtifacts.summary}
+            job={summaryJob}
+            canSummarize={paper.section_count > 0}
+            onGenerate={generateSummary}
+          />
         )}
         {!artifactLoading && !artifactError && activeTab === 'translations' && (
           <TranslationsTab translations={paperArtifacts.translations || []} />

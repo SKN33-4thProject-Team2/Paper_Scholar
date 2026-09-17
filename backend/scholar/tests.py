@@ -555,3 +555,135 @@ class DjangoPaperRepositoryTest(APITestCase):
         from src.services.django_paper_repository import get_papers_by_ids
 
         self.assertEqual(get_papers_by_ids([]), [])
+
+
+class PaperSummarizeAPITest(APITestCase):
+    def setUp(self):
+        self.paper = Paper.objects.create(
+            arxiv_id="2601.00001",
+            title="Summary API paper",
+            authors=["Test Author"],
+        )
+        PaperSection.objects.create(
+            paper=self.paper,
+            section_order=1,
+            section_title="Introduction",
+            section_text="Summary source body",
+        )
+        self.url = reverse(
+            "scholar:paper-summarize",
+            kwargs={"arxiv_id": self.paper.arxiv_id},
+        )
+
+    @patch("scholar.views.enqueue_summary_job")
+    def test_summarize_creates_pending_job(self, enqueue_mock):
+        response = self.client.post(self.url, {}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        job = ProcessingJob.objects.get(pk=response.data["job"]["id"])
+        self.assertEqual(job.job_type, ProcessingJob.JobType.SUMMARIZE)
+        self.assertEqual(job.status, ProcessingJob.Status.PENDING)
+        enqueue_mock.assert_called_once_with(job.id)
+
+    @patch("scholar.views.enqueue_summary_job")
+    def test_summarize_reuses_active_job(self, enqueue_mock):
+        active_job = ProcessingJob.objects.create(
+            paper=self.paper,
+            job_type=ProcessingJob.JobType.SUMMARIZE,
+            status=ProcessingJob.Status.RUNNING,
+            progress_total=1,
+        )
+
+        response = self.client.post(self.url, {}, format="json")
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(response.data["job"]["id"], active_job.id)
+        enqueue_mock.assert_not_called()
+
+    @patch("scholar.views.enqueue_summary_job")
+    def test_existing_summary_requires_force_to_regenerate(self, enqueue_mock):
+        PaperSummary.objects.create(
+            paper=self.paper,
+            summary_text="Existing summary",
+            model_name="test-model",
+            section_count=1,
+            chunk_count=1,
+        )
+
+        existing_response = self.client.post(self.url, {}, format="json")
+        forced_response = self.client.post(
+            self.url,
+            {"force": True},
+            format="json",
+        )
+
+        self.assertEqual(existing_response.status_code, status.HTTP_200_OK)
+        self.assertEqual(
+            existing_response.data["job"]["status"],
+            ProcessingJob.Status.COMPLETED,
+        )
+        self.assertEqual(forced_response.status_code, status.HTTP_202_ACCEPTED)
+        forced_job_id = forced_response.data["job"]["id"]
+        enqueue_mock.assert_called_once_with(forced_job_id)
+
+    @patch("scholar.views.enqueue_summary_job")
+    def test_summarize_rejects_paper_without_sections(self, enqueue_mock):
+        empty_paper = Paper.objects.create(
+            arxiv_id="2601.00002",
+            title="Empty paper",
+            authors=[],
+        )
+        response = self.client.post(
+            reverse(
+                "scholar:paper-summarize",
+                kwargs={"arxiv_id": empty_paper.arxiv_id},
+            ),
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
+        enqueue_mock.assert_not_called()
+
+    @patch("scholar.services.summary_service.generate_paper_summary")
+    def test_summary_worker_completes_job(self, generate_mock):
+        from .jobs import _run_summary_job
+
+        summary = PaperSummary.objects.create(
+            paper=self.paper,
+            summary_text="Generated summary",
+            model_name="summary-model",
+            section_count=1,
+            chunk_count=1,
+        )
+        generate_mock.return_value = summary
+        job = ProcessingJob.objects.create(
+            paper=self.paper,
+            job_type=ProcessingJob.JobType.SUMMARIZE,
+            progress_total=1,
+        )
+
+        _run_summary_job(job.id)
+        job.refresh_from_db()
+
+        generate_mock.assert_called_once_with(self.paper)
+        self.assertEqual(job.status, ProcessingJob.Status.COMPLETED)
+        self.assertEqual(job.progress_current, 1)
+        self.assertEqual(job.model_name, "summary-model")
+
+    @patch("scholar.services.summary_service.generate_paper_summary")
+    def test_summary_worker_records_failure(self, generate_mock):
+        from .jobs import _run_summary_job
+
+        generate_mock.side_effect = RuntimeError("summary failed")
+        job = ProcessingJob.objects.create(
+            paper=self.paper,
+            job_type=ProcessingJob.JobType.SUMMARIZE,
+            progress_total=1,
+        )
+
+        _run_summary_job(job.id)
+        job.refresh_from_db()
+
+        self.assertEqual(job.status, ProcessingJob.Status.FAILED)
+        self.assertEqual(job.error_message, "summary failed")
