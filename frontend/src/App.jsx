@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import { getHealth, getPaper, getPapers } from './api'
+import PaperDetail from './PaperDetail'
 import SearchPanel from './SearchPanel'
 import './App.css'
 
@@ -31,42 +32,6 @@ function PaperCard({ paper, isSelected, onSelect }) {
         </StatusBadge>
       </span>
     </button>
-  )
-}
-
-function PaperDetail({ paper, loading }) {
-  if (loading) {
-    return <div className="empty-state">논문 상세 정보를 불러오는 중입니다.</div>
-  }
-  if (!paper) {
-    return <div className="empty-state">목록에서 논문을 선택해 주세요.</div>
-  }
-
-  return (
-    <article className="paper-detail">
-      <div>
-        <span className="eyebrow">arXiv:{paper.arxiv_id}</span>
-        <h2>{paper.title}</h2>
-        <p className="paper-detail__authors">
-          {paper.authors.length > 0 ? paper.authors.join(', ') : '저자 정보 없음'}
-        </p>
-      </div>
-      <div className="paper-detail__stats">
-        <div><strong>{paper.section_count}</strong><span>본문 섹션</span></div>
-        <div><strong>{paper.has_summary ? '완료' : '대기'}</strong><span>요약</span></div>
-        <div><strong>{paper.translation_count}</strong><span>번역 결과</span></div>
-      </div>
-      <section>
-        <h3>초록</h3>
-        <p className="paper-detail__abstract">
-          {paper.abstract || '등록된 초록이 없습니다.'}
-        </p>
-      </section>
-      <div className="paper-detail__links">
-        {paper.entry_url && <a href={paper.entry_url} target="_blank" rel="noreferrer">arXiv 보기</a>}
-        {paper.pdf_url && <a href={paper.pdf_url} target="_blank" rel="noreferrer">PDF 열기</a>}
-      </div>
-    </article>
   )
 }
 
@@ -192,7 +157,11 @@ function App() {
           </section>
 
           <section className="detail-panel">
-            <PaperDetail paper={selectedPaper} loading={detailLoading} />
+            <PaperDetail
+              key={selectedPaper?.arxiv_id || 'empty'}
+              paper={selectedPaper}
+              loading={detailLoading}
+            />
           </section>
         </div>
       ) : (

@@ -40,6 +40,18 @@ export function getPaper(arxivId) {
   return request(`/papers/${encodeURIComponent(arxivId)}/`)
 }
 
+export function getPaperSections(arxivId) {
+  return request(`/papers/${encodeURIComponent(arxivId)}/sections/`)
+}
+
+export function getPaperSummary(arxivId) {
+  return request(`/papers/${encodeURIComponent(arxivId)}/summary/`)
+}
+
+export function getPaperTranslations(arxivId) {
+  return request(`/papers/${encodeURIComponent(arxivId)}/translations/`)
+}
+
 export function searchArxiv(params) {
   return request('/search/', {
     method: 'POST',
