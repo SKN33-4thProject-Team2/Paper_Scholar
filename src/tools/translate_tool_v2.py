@@ -106,7 +106,40 @@ class TranslateTool:
             updated_at TEXT NOT NULL
         )""")
 
-    def _read_summaries(self, paper_ids: list[str] | None = None) -> list[sqlite3.Row]:
+    def _sync_translation_to_mysql(
+        self,
+        paper_id: str,
+        source_text: str,
+        translated_text: str,
+        chunk_count: int,
+    ) -> None:
+        """SQLite 번역 저장을 유지하면서 요약 번역을 MySQL에도 동기화한다."""
+        try:
+            from services.django_paper_repository import upsert_translation
+
+            upsert_translation(
+                paper_id,
+                source_text=source_text,
+                translated_text=translated_text,
+                translation_type="summary",
+                model_name=str(getattr(self.translator, "model", "")),
+                chunk_count=chunk_count,
+            )
+        except Exception as exc:
+            print(f"[Warning] MySQL 요약 번역 동기화 실패: {exc}")
+
+    @staticmethod
+    def _read_mysql_summaries(
+        paper_ids: list[str] | None = None,
+    ) -> list[dict[str, object]]:
+        from services.django_paper_repository import get_paper_summaries
+
+        return get_paper_summaries(paper_ids)
+
+    def _read_sqlite_summaries(
+        self,
+        paper_ids: list[str] | None = None,
+    ) -> list[dict[str, object]]:
         if not self.summary_db.is_file():
             raise FileNotFoundError(f"요약 DB를 찾을 수 없습니다: {self.summary_db}")
         with sqlite3.connect(self.summary_db) as db:
@@ -141,6 +174,43 @@ class TranslateTool:
                 )
             return result
 
+    def _read_summaries(
+        self,
+        paper_ids: list[str] | None = None,
+    ) -> list[dict[str, object]]:
+        """MySQL을 우선 조회하고 요청 ID의 누락분만 SQLite에서 보충한다."""
+        try:
+            mysql_rows = self._read_mysql_summaries(paper_ids)
+        except Exception:
+            mysql_rows = []
+
+        if not paper_ids:
+            return mysql_rows or self._read_sqlite_summaries()
+
+        normalize = lambda value: re.sub(r"v\d+$", "", str(value).strip())
+        rows_by_id = {
+            normalize(row["paper_id"]): row
+            for row in mysql_rows
+        }
+        missing_ids = [
+            paper_id
+            for paper_id in paper_ids
+            if normalize(paper_id) not in rows_by_id
+        ]
+        if missing_ids:
+            try:
+                sqlite_rows = self._read_sqlite_summaries(missing_ids)
+            except (FileNotFoundError, sqlite3.Error):
+                sqlite_rows = []
+            for row in sqlite_rows:
+                rows_by_id.setdefault(normalize(row["paper_id"]), row)
+
+        return [
+            rows_by_id[normalize(paper_id)]
+            for paper_id in paper_ids
+            if normalize(paper_id) in rows_by_id
+        ]
+
     @staticmethod
     def _safe_name(value: str) -> str:
         name = re.sub(r"[^A-Za-z0-9가-힣._-]+", "_", value).strip("._")
@@ -155,6 +225,7 @@ class TranslateTool:
         self.markdown_dir.mkdir(parents=True, exist_ok=True)
         now = datetime.now(timezone.utc).isoformat()
         outputs: list[Path] = []
+        mysql_sync_rows: list[tuple[str, str, str, int]] = []
         with sqlite3.connect(self.translate_db) as db:
             self._init_db(db)
             for row in rows:
@@ -171,10 +242,20 @@ class TranslateTool:
                     updated_at=excluded.updated_at""",
                     (row["paper_id"], row["title"] or row["paper_id"], source,
                      translated, chunk_count, now, now))
+                mysql_sync_rows.append(
+                    (str(row["paper_id"]), source, translated, chunk_count)
+                )
                 outputs.append(self.export_markdown(str(row["paper_id"]), db=db,
                                                     title=str(row["title"] or row["paper_id"]),
                                                     translated=str(translated)))
             db.commit()
+        for paper_id, source, translated, chunk_count in mysql_sync_rows:
+            self._sync_translation_to_mysql(
+                paper_id,
+                source,
+                translated,
+                chunk_count,
+            )
         return outputs
 
     # 기존 호출부와의 호환용 별칭

@@ -1,0 +1,1 @@
+"""Scholar management commands."""

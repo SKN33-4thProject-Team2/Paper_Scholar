@@ -47,6 +47,7 @@ except ImportError:
         PAPER_EXTRACTION_SUCCEEDED = 5200
         PAPER_EXTRACTION_FAILED = 5500
 
+
     class AppLogger:
         def __init__(self, name: str):
             self.name = name
@@ -59,6 +60,8 @@ try:
     from tools.keyword_tool import generate_arxiv_keywords, KeywordToolError
 except ImportError:
     generate_arxiv_keywords = None
+
+
     class KeywordToolError(Exception):
         pass
 
@@ -190,7 +193,8 @@ class ArxivSearchBot:
         if os.path.exists(str(EXTRACTED_DB)):
             try:
                 with sqlite3.connect(str(EXTRACTED_DB)) as ext_conn:
-                    extracted_pids = {r[0] for r in ext_conn.execute("SELECT DISTINCT paper_id FROM paper_sections").fetchall()}
+                    extracted_pids = {r[0] for r in
+                                      ext_conn.execute("SELECT DISTINCT paper_id FROM paper_sections").fetchall()}
             except Exception:
                 pass
 
@@ -220,7 +224,8 @@ class ArxivSearchBot:
         if os.path.exists(str(EXTRACTED_DB)):
             try:
                 with sqlite3.connect(str(EXTRACTED_DB)) as ext_conn:
-                    extracted_pids = {r[0] for r in ext_conn.execute("SELECT DISTINCT paper_id FROM paper_sections").fetchall()}
+                    extracted_pids = {r[0] for r in
+                                      ext_conn.execute("SELECT DISTINCT paper_id FROM paper_sections").fetchall()}
             except Exception:
                 pass
 
@@ -318,13 +323,15 @@ class ArxivSearchBot:
                 err_msg = str(e)
                 if "429" in err_msg or "Too Many Requests" in err_msg:
                     wait_time = (2 ** (attempt + 1)) * 1.5 + random.uniform(0.5, 1.5)
-                    print(f"\n[Warning] ⚠️ arXiv 429 감지. {wait_time:.1f}초 대기 후 재시도... (시도 {attempt+1}/{max_retries})")
+                    print(f"\n[Warning] ⚠️ arXiv 429 감지. {wait_time:.1f}초 대기 후 재시도... (시도 {attempt + 1}/{max_retries})")
                     time.sleep(wait_time)
                     if attempt == max_retries - 1:
-                        self.logger.log(LogCode.PAPER_SEARCH_FAILED, query=final_query, error_type="RateLimit429", error=err_msg)
+                        self.logger.log(LogCode.PAPER_SEARCH_FAILED, query=final_query, error_type="RateLimit429",
+                                        error=err_msg)
                         return []
                 else:
-                    self.logger.log(LogCode.PAPER_SEARCH_FAILED, query=final_query, error_type=type(e).__name__, error=err_msg)
+                    self.logger.log(LogCode.PAPER_SEARCH_FAILED, query=final_query, error_type=type(e).__name__,
+                                    error=err_msg)
                     return []
 
         self.logger.log(LogCode.PAPER_SEARCH_SUCCEEDED, query=final_query, result_count=len(results))
@@ -337,6 +344,34 @@ class ArxivSearchBot:
             return "저장할 논문이 없습니다."
 
         try:
+            # Django/MySQL Paper 테이블 동기화
+            # 기존 SQLite 기반 추출 파이프라인은 그대로 유지한다.
+            mysql_created_count = 0
+            mysql_updated_count = 0
+            mysql_sync_error = None
+
+            try:
+                from services.django_paper_repository import upsert_papers
+
+                mysql_created_count, mysql_updated_count = upsert_papers(
+                    selected_papers
+                )
+                mysql_status_message = (
+                    "[MySQL 동기화] "
+                    f"신규 {mysql_created_count}건, "
+                    f"갱신 {mysql_updated_count}건"
+                )
+                print(f"\n[System] ✅ {mysql_status_message}")
+
+            except Exception as mysql_error:
+                mysql_sync_error = str(mysql_error)
+                mysql_status_message = (
+                    "[MySQL 동기화 경고] "
+                    "MySQL 저장에 실패하여 기존 SQLite 저장만 진행합니다."
+                )
+                print(f"\n[Warning] ⚠️ {mysql_status_message}")
+                print(f"  - 원인: {mysql_sync_error}")
+
             # 1. 서재 DB에서 이미 저장된 paper_id 사전 조회
             with sqlite3.connect(self.db_file) as conn:
                 cursor = conn.cursor()
@@ -359,6 +394,7 @@ class ArxivSearchBot:
 
             if not new_papers:
                 return (
+                    f"{mysql_status_message}\n"
                     "선택하신 논문이 모두 이미 서재에 저장되어 있습니다.\n"
                     + "\n".join(notice_lines)
                 )
@@ -372,7 +408,8 @@ class ArxivSearchBot:
                         'INSERT INTO papers (id, title, authors, summary, pdf_url, created_at) VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)',
                         (paper['id'], paper['title'], paper['authors'], paper['summary'], paper['pdf_url'])
                     )
-                cursor.execute('DELETE FROM papers WHERE id NOT IN (SELECT id FROM papers ORDER BY created_at DESC LIMIT 1000)')
+                cursor.execute(
+                    'DELETE FROM papers WHERE id NOT IN (SELECT id FROM papers ORDER BY created_at DESC LIMIT 1000)')
                 cursor.execute('SELECT id, title FROM papers ORDER BY created_at DESC')
                 rows = cursor.fetchall()
                 conn.commit()
@@ -405,20 +442,36 @@ class ArxivSearchBot:
                         print(f" 실패! (이유: {ex})")
 
             final_message_parts = [
-                f"신규 논문 {len(new_papers)}편이 서재에 추가되었습니다. (현재 총 서재 논문: {len(json_data)}편)"
+                mysql_status_message,
+                (
+                    f"신규 논문 {len(new_papers)}편이 서재에 추가되었습니다. "
+                    f"(현재 총 서재 논문: {len(json_data)}편)"
+                ),
             ]
+
             if notice_lines:
-                final_message_parts.append("\n[기존 보관 논문 안내]\n" + "\n".join(notice_lines))
+                final_message_parts.append(
+                    "\n[기존 보관 논문 안내]\n"
+                    + "\n".join(notice_lines)
+                )
+
             if extraction_results:
-                final_message_parts.append("\n[본문 추출 결과]\n" + "\n".join(extraction_results))
+                final_message_parts.append(
+                    "\n[본문 추출 결과]\n"
+                    + "\n".join(extraction_results)
+                )
 
             self.logger.log(
                 LogCode.PAPER_SAVE_SUCCEEDED,
                 saved_count=len(new_papers),
                 total_library_count=len(json_data),
                 db_path=self.db_file,
-                json_path=self.json_file
+                json_path=self.json_file,
+                mysql_created_count=mysql_created_count,
+                mysql_updated_count=mysql_updated_count,
+                mysql_sync_error=mysql_sync_error,
             )
+
             return "\n".join(final_message_parts)
 
         except Exception as e:
@@ -607,7 +660,8 @@ def search_arxiv_papers_tool(query: str, max_results: int = 10, sort_by: str = "
 
 
 class SaveAndExtractToolInput(BaseModel):
-    paper_ids: List[str] = Field(..., description="내 서재(Library DB)에 메타데이터를 저장하고, 본문 섹션 추출 및 벡터 색인까지 함께 수행할 논문 ID 목록 (예: ['2402.08954'])")
+    paper_ids: List[str] = Field(...,
+                                 description="내 서재(Library DB)에 메타데이터를 저장하고, 본문 섹션 추출 및 벡터 색인까지 함께 수행할 논문 ID 목록 (예: ['2402.08954'])")
 
 
 @tool("save_and_extract_papers", args_schema=SaveAndExtractToolInput)

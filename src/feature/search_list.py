@@ -4,6 +4,7 @@ import sys
 import json
 import sqlite3
 import requests
+import re
 from typing import List, Optional
 from pathlib import Path
 from dotenv import load_dotenv
@@ -86,41 +87,111 @@ class LocalLibraryBot:
         DATA_LIST_DIR.mkdir(parents=True, exist_ok=True)
 
     def get_all_json_ids(self) -> List[str]:
-        if not JSON_FILE.exists(): return []
-        with open(JSON_FILE, 'r', encoding='utf-8') as f:
-            try:
-                return list(json.load(f).keys())
-            except json.JSONDecodeError:
-                return []
+        mysql_ids = []
+        try:
+            from services.django_paper_repository import list_paper_ids
+
+            mysql_ids = list_paper_ids()
+        except Exception:
+            pass
+
+        local_ids = list(self._load_local_json().keys())
+        return self._merge_paper_ids(mysql_ids, local_ids)
 
     def search_json(self, query: str) -> List[str]:
-        if not JSON_FILE.exists(): return []
-        with open(JSON_FILE, 'r', encoding='utf-8') as f:
-            try:
-                json_data = json.load(f)
-            except json.JSONDecodeError:
-                return []
+        mysql_ids = []
+        try:
+            from services.django_paper_repository import search_paper_ids
+
+            mysql_ids = search_paper_ids(query)
+        except Exception:
+            pass
+
         matched_ids = []
-        keywords = query.lower().split()
+        keywords = query.casefold().split()
+        json_data = self._load_local_json()
         for pid, pdata in json_data.items():
-            if all(kw in pdata.get("title", "").lower() for kw in keywords if len(kw) > 1):
+            title = str(pdata.get("title", "")).casefold()
+            if all(kw in title for kw in keywords if len(kw) > 1):
                 matched_ids.append(pid)
-        return matched_ids
+        return self._merge_paper_ids(mysql_ids, matched_ids)
 
     def fetch_full_data_from_db(self, paper_ids: List[str]) -> List[dict]:
-        conn = sqlite3.connect(DB_FILE)
-        cursor = conn.cursor()
+        if not paper_ids:
+            return []
+
+        mysql_papers = []
+        try:
+            from services.django_paper_repository import get_papers_by_ids
+
+            mysql_papers = get_papers_by_ids(paper_ids)
+        except Exception:
+            pass
+
+        papers_by_id = {paper["id"]: paper for paper in mysql_papers}
+        missing_ids = [
+            paper_id for paper_id in paper_ids
+            if paper_id not in papers_by_id
+        ]
+        papers_by_id.update(self._fetch_local_papers(missing_ids))
+
+        return [
+            papers_by_id[paper_id]
+            for paper_id in paper_ids
+            if paper_id in papers_by_id
+        ]
+
+    @staticmethod
+    def _load_local_json() -> dict:
+        if not JSON_FILE.exists():
+            return {}
+        with open(JSON_FILE, 'r', encoding='utf-8') as file:
+            try:
+                return json.load(file)
+            except json.JSONDecodeError:
+                return {}
+
+    @staticmethod
+    def _merge_paper_ids(primary_ids: List[str], fallback_ids: List[str]) -> List[str]:
+        """MySQL ID를 우선하며 버전만 다른 로컬 ID의 중복을 제거합니다."""
+        merged_ids = []
+        seen_ids = set()
+        for paper_id in [*primary_ids, *fallback_ids]:
+            canonical_id = re.sub(r"v\d+$", "", str(paper_id).strip())
+            if not canonical_id or canonical_id in seen_ids:
+                continue
+            merged_ids.append(str(paper_id).strip())
+            seen_ids.add(canonical_id)
+        return merged_ids
+
+    @staticmethod
+    def _fetch_local_papers(paper_ids: List[str]) -> dict[str, dict]:
+        if not paper_ids or not DB_FILE.exists():
+            return {}
+
         rows = []
-        for i in range(0, len(paper_ids), 900):
-            chunk = paper_ids[i:i + 900]
-            cursor.execute(
-                f"SELECT id, title, authors, summary, pdf_url FROM papers WHERE id IN ({','.join('?' for _ in chunk)})",
-                chunk)
-            rows.extend(cursor.fetchall())
-        conn.close()
-        row_dict = {r[0]: r for r in rows}
-        return [{"id": r[0], "title": r[1], "authors": r[2], "summary": r[3], "pdf_url": r[4]} for pid in paper_ids if
-                pid in row_dict for r in [row_dict[pid]]]
+        with sqlite3.connect(DB_FILE) as conn:
+            cursor = conn.cursor()
+            for index in range(0, len(paper_ids), 900):
+                chunk = paper_ids[index:index + 900]
+                placeholders = ",".join("?" for _ in chunk)
+                cursor.execute(
+                    "SELECT id, title, authors, summary, pdf_url "
+                    f"FROM papers WHERE id IN ({placeholders})",
+                    chunk,
+                )
+                rows.extend(cursor.fetchall())
+
+        return {
+            row[0]: {
+                "id": row[0],
+                "title": row[1],
+                "authors": row[2],
+                "summary": row[3],
+                "pdf_url": row[4],
+            }
+            for row in rows
+        }
 
     def update_downloaded_pdf_json(self, paper_title: str, filepath: str):
         downloaded_data = {}
@@ -200,7 +271,7 @@ class LocalLibraryBot:
 
     def run(self):
         print("=" * 50)
-        print(f"내 서재(Local JSON/DB) 관리 챗봇 (Model: {OPENAI_CHAT_MODEL})")
+        print(f"내 서재(MySQL/Local fallback) 관리 챗봇 (Model: {OPENAI_CHAT_MODEL})")
         print("=" * 50)
 
         matched_ids = []

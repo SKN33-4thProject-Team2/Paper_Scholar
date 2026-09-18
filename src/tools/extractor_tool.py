@@ -186,7 +186,22 @@ def extract_and_save(paper_id: str) -> int:
                 [(clean_id, order, title, text, fragment) for order, title, text, fragment in sections],
             )
 
-        # 2. SQLite 적재 완료 직후 Chroma 본문 벡터 스토어 즉시 색인 동기화
+        # 2. Django/MySQL PaperSection 테이블 동기화
+        try:
+            from services.django_paper_repository import replace_paper_sections
+
+            mysql_section_count = replace_paper_sections(clean_id, sections)
+            print(
+                f"  [System] MySQL 본문 섹션 동기화 완료 "
+                f"({mysql_section_count}개)"
+            )
+        except Exception as mysql_err:
+            print(
+                f"  [Notice] MySQL 본문 섹션 동기화 경고 "
+                f"({clean_id}): {mysql_err}"
+            )
+
+        # 3. SQLite 적재 완료 직후 Chroma 본문 벡터 스토어 즉시 색인 동기화
         try:
             from services.fulltext_vector_store import ChromaFullTextStore
             ChromaFullTextStore().ensure_index(paper_id=clean_id)

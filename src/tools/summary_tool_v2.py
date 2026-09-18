@@ -305,6 +305,28 @@ class SummaryTool:
         self.generation_calls += 1
         return str(self.generator(prompt, **kwargs))
 
+    def _sync_summary_to_mysql(
+        self,
+        paper_id: str,
+        summary_text: str,
+        *,
+        section_count: int,
+        chunk_count: int,
+    ) -> None:
+        """MySQL 장애가 기존 SQLite 요약 저장을 막지 않도록 최선형으로 동기화한다."""
+        try:
+            from services.django_paper_repository import upsert_paper_summary
+
+            upsert_paper_summary(
+                paper_id,
+                summary_text=summary_text,
+                model_name=self.model,
+                section_count=section_count,
+                chunk_count=chunk_count,
+            )
+        except Exception as exc:
+            print(f"[Warning] MySQL 요약 동기화 실패: {exc}")
+
     def _read_paper(self, paper_id: str) -> tuple[str, str]:
         if not self.source_db.exists():
             raise FileNotFoundError(f"원문 DB를 찾을 수 없습니다: {self.source_db}")
@@ -337,8 +359,29 @@ class SummaryTool:
             content = str(row[1] or "")
         return str(row[0] or paper_id), content
 
+    @staticmethod
+    def _read_mysql_sections(
+        paper_id: str,
+    ) -> tuple[str, list[tuple[int, str, str]]]:
+        from services.django_paper_repository import get_paper_sections
+
+        return get_paper_sections(paper_id)
+
     def _read_sections(self, paper_id: str) -> tuple[str, list[tuple[int, str, str]]]:
         """섹션 순서를 보존한 ``(order, title, text)`` 목록을 반환한다."""
+        try:
+            mysql_title, mysql_sections = self._read_mysql_sections(paper_id)
+            filtered_mysql_sections = [
+                (int(order), str(title or "").strip(), str(text or "").strip())
+                for order, title, text in mysql_sections
+                if str(text or "").strip()
+                and not _EXCLUDED_SECTION.search(str(title or "").strip())
+            ]
+            if filtered_mysql_sections:
+                return mysql_title, filtered_mysql_sections
+        except Exception:
+            pass
+
         if not self.source_db.exists():
             raise FileNotFoundError(f"원문 DB를 찾을 수 없습니다: {self.source_db}")
         with sqlite3.connect(self.source_db) as db:
@@ -382,6 +425,15 @@ class SummaryTool:
 
     def list_papers(self) -> list[tuple[str, str]]:
         """원문 DB에 있는 논문 ID와 제목을 순서대로 반환한다."""
+        try:
+            from services.django_paper_repository import list_papers_with_sections
+
+            mysql_papers = list_papers_with_sections()
+            if mysql_papers:
+                return mysql_papers
+        except Exception:
+            pass
+
         with sqlite3.connect(self.source_db) as db:
             try:
                 return [(str(row[0]), str(row[1] or row[0]))
@@ -510,6 +562,12 @@ class SummaryTool:
                        (paper_id, title, paper_summary, self.model, len(sections), len(final_chunks), now, now))
             db.execute("DELETE FROM paper_summary_chunk_temp WHERE paper_id = ?", (paper_id,))
             db.commit()
+        self._sync_summary_to_mysql(
+            paper_id,
+            paper_summary,
+            section_count=len(sections),
+            chunk_count=len(final_chunks),
+        )
         markdown = self._build_markdown(title, paper_summary)
         result = SummaryResult(paper_id, title, markdown, len(final_chunks), self.model)
         return result
@@ -549,6 +607,12 @@ class SummaryTool:
                 (paper_id, title, paper_summary, self.model, len(sections), 1, now, now),
             )
             db.commit()
+        self._sync_summary_to_mysql(
+            paper_id,
+            paper_summary,
+            section_count=len(sections),
+            chunk_count=1,
+        )
         result = SummaryResult(
             paper_id, title, self._build_markdown(title, paper_summary), 1, self.model
         )
