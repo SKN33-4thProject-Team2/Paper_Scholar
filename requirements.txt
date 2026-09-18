@@ -1,16 +1,45 @@
-langchain-core>=1.0,<2.0
-langchain-openai>=1.0,<2.0
-langchain-chroma>=1.0,<2.0
-python-dotenv>=1.0,<2.0
-PyYAML>=6.0,<7.0
-arxiv>=2.0,<5.0
-chromadb>=1.5,<2.0
-sentence-transformers>=6.0,<7.0
-pymupdf>=1.28.2
-streamlit>=1.40,<2.0
-requests>=2.31,<3.0
-beautifulsoup4>=4.12,<5.0
-pydantic>=2.0,<3.0
+# Django 및 웹 프레임워크 핵심
+Django>=5.2,<6.0
+djangorestframework>=3.15,<4.0
+djangorestframework-simplejwt>=5.3,<6.0
+PyMySQL>=1.1,<2.0
+asgiref
+sqlparse
+django-cors-headers>=4.4,<5.0
 
-langgraph>=1.0,<2.0
-langsmith>=0.3.45,<1.0
+# AI / ML 및 언어 모델 관련
+torch
+transformers
+datasets
+accelerate
+huggingface-hub>=0.24.0,<2.0
+gradio
+trl
+peft
+sentence-transformers
+
+# RAG & LangChain
+langchain
+langchain-community
+langchain-core
+langchain-openai
+langchain-chroma
+langgraph
+langsmith
+chromadb
+
+# 논문 검색 및 본문 추출
+arxiv
+beautifulsoup4
+PyMuPDF
+
+# 유틸리티 & 환경 설정
+requests
+python-dotenv
+pydantic
+PyYAML
+urllib3
+
+# 평가 도구
+ragas
+deepeval

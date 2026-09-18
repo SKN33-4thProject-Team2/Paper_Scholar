@@ -1,4 +1,8 @@
-"""추출된 논문 본문을 섹션별 청크로 색인하는 검색 저장소."""
+"""추출된 논문 본문을 섹션별 청크로 색인하는 검색 저장소.
+
+HTML 마크업을 복원하여 수식($...$)과 표(Markdown Table)를 보존한 채 청킹하며,
+사전 색인 구조를 채택하여 쿼리 시점의 검색 지연을 최소화한다.
+"""
 
 from __future__ import annotations
 
@@ -8,9 +12,20 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from . import PROJECT_ROOT
-from .summary_vector_store import STORAGE_CONFIG
-
+# ---------------------------------------------------------------------
+# [프로젝트 루트 및 임베딩 설정 로드]
+# ---------------------------------------------------------------------
+try:
+    from . import PROJECT_ROOT
+    from .summary_vector_store import STORAGE_CONFIG
+except (ImportError, ValueError):
+    PROJECT_ROOT = Path(__file__).resolve().parent.parent.parent
+    STORAGE_CONFIG = {
+        "directory": PROJECT_ROOT / "data" / "vector_store" / "chroma",
+        "embedding_model": "BAAI/bge-m3",
+        "device": "cpu",
+        "normalize_embeddings": True,
+    }
 
 EXTRACT_DB_PATH = PROJECT_ROOT / "data" / "paper_extract" / "extracted_papers.db"
 SAVED_PAPERS_DB_PATH = PROJECT_ROOT / "data" / "paper_list" / "saved_papers.db"
@@ -19,10 +34,9 @@ SECTION_COLUMNS = (
     "abstract", "introduction", "related_work", "method", "experiment",
     "result", "conclusion", "others",
 )
-# 참고문헌은 본문과 성격이 달라 색인하지 않는다. 섞이면 본문 검색 결과를
-# 인용 문장이 밀어낸다.
+# 참고문헌은 본문 시맨틱 검색을 왜곡하므로 색인 대상에서 배제
 EXCLUDED_SECTIONS = {"references", "bibliography"}
-# 표 한 개가 이보다 길면 그 표만 행 단위로 나눈다.
+# 표 한 개가 이보다 길면 행 단위로 분할
 TABLE_CHUNK_LIMIT = 4000
 
 
@@ -47,7 +61,7 @@ def split_text(text: str, *, chunk_size: int = 1200, overlap: int = 180) -> list
 
 
 def _replace_with_text(element, text: str) -> None:
-    """요소를 지우고 그 자리에 텍스트만 남긴다."""
+    """XML/HTML 요소를 지우고 그 자리에 텍스트만 남긴다."""
     parent = element.getparent()
     if parent is None:
         return
@@ -61,7 +75,7 @@ def _replace_with_text(element, text: str) -> None:
 
 
 def _table_to_markdown(table) -> str:
-    """<tr><td> 를 마크다운 표로 바꾼다. 청크가 잘려도 행 단위로 읽힌다."""
+    """HTML <tr>, <td>를 마크다운 표로 변환한다."""
     rows: list[list[str]] = []
     for row in table.xpath(".//tr"):
         cells = [" ".join(cell.text_content().split()) for cell in row.xpath("./td|./th")]
@@ -80,32 +94,26 @@ def _table_to_markdown(table) -> str:
 
 
 def restore_markup(html: str) -> str:
-    """section_html 에서 표와 수식을 되살려 본문 텍스트로 만든다.
-
-    section_text 는 표와 수식이 아예 지워진 채 저장돼 있다. 마스킹 토큰조차
-    남지 않아 되돌릴 수 없으므로, 원형이 남아 있는 section_html 에서 다시
-    만든다. 72개 절에 표 37개, 수식 828개가 들어 있다.
-    """
+    """section_html에서 MathML 수식($...$)과 표를 복원하여 본문 텍스트로 만든다."""
     if not html or not html.strip():
         return ""
     try:
         from lxml import html as lxml_html
     except ImportError as exc:
-        raise FullTextStoreError("lxml 이 설치되어 있지 않습니다.") from exc
+        raise FullTextStoreError("lxml이 설치되어 있지 않습니다.") from exc
 
     root = lxml_html.fromstring(f"<div>{html}</div>")
 
-    # 수식을 먼저 바꾼다. 표 안에도 수식이 있어서, 표를 먼저 처리하면 셀에
-    # MathML 찌꺼기가 그대로 딸려 들어간다.
+    # 1. 수식 MathML을 LaTeX 문자열($...$)로 치환
     for math in root.xpath(".//math"):
         latex = math.xpath('.//annotation[@encoding="application/x-tex"]/text()')
         body = latex[0].strip() if latex and latex[0].strip() else ""
         _replace_with_text(math, f" ${body}$ " if body else "")
 
+    # 2. 표 HTML을 Markdown Table로 치환
     for table in root.xpath(".//table"):
         _replace_with_text(table, _table_to_markdown(table))
 
-    # text_content() 는 문단을 붙여 버린다. 청킹이 문단 경계를 쓰므로 살려 둔다.
     for paragraph in root.xpath(".//p"):
         paragraph.tail = (paragraph.tail or "") + "\n\n"
 
@@ -114,11 +122,7 @@ def restore_markup(html: str) -> str:
 
 
 def split_section(text: str) -> list[str]:
-    """표는 통째로, 나머지는 기존 규칙대로 나눈다.
-
-    표가 청크 중간에서 잘리면 머리글과 값이 떨어져 검색에도 답변에도 쓸 수
-    없다. 표 블록만 먼저 떼어 내고 그 사이 글만 split_text 에 넘긴다.
-    """
+    """표는 블록 단위로 온전히 보존하고, 일반 텍스트는 문단 단위로 청킹한다."""
     blocks = re.split(r"(\n\|(?:[^\n]*\|)+(?:\n\|(?:[^\n]*\|)+)*)", "\n" + text)
     chunks: list[str] = []
     for block in blocks:
@@ -131,7 +135,7 @@ def split_section(text: str) -> list[str]:
         if len(stripped) <= TABLE_CHUNK_LIMIT:
             chunks.append(stripped)
             continue
-        # 긴 표는 머리글을 매 조각에 다시 붙여 행 단위로만 자른다.
+        # 거대 표는 헤더를 보존하며 행 단위로 분할
         lines = stripped.splitlines()
         header, current = lines[:2], list(lines[:2])
         for line in lines[2:]:
@@ -178,7 +182,7 @@ class ChromaFullTextStore:
         return self._model_instance
 
     def _titles(self) -> dict[str, str]:
-        """paper_sections 에는 제목 컬럼이 없어 서재 DB 에서 가져온다."""
+        """paper_sections에 제목이 없어 서재 DB(saved_papers.db)에서 가져온다."""
         if not SAVED_PAPERS_DB_PATH.exists():
             return {}
         try:
@@ -218,7 +222,6 @@ class ChromaFullTextStore:
             section_title = str(row["section_title"] or "").strip()
             if section_title.casefold() in EXCLUDED_SECTIONS:
                 continue
-            # HTML 이 비었거나 복원에 실패하면 기존 텍스트로 떨어진다.
             body = restore_markup(str(row["section_html"] or ""))
             if not body:
                 body = str(row["section_text"] or "").strip()
@@ -234,17 +237,21 @@ class ChromaFullTextStore:
         ]
 
     def ensure_index(self, *, paper_id: str | None = None) -> int:
-        """선택 논문 또는 전체 논문을 Chroma 컬렉션에 동기화한다."""
+        """선택 논문 또는 전체 논문의 본문 청크를 Chroma 컬렉션에 동기화한다."""
         collection = self._collection()
         added = 0
         for indexed_paper_id, title, sections in self._read_papers(paper_id=paper_id):
             source_hash = hashlib.sha256("\n".join(text for _, text in sections).encode()).hexdigest()
             existing = collection.get(where={"paper_id": indexed_paper_id}, include=["metadatas"])
             existing_metadata = existing.get("metadatas") or []
+
+            # 이미 색인되어 있고 본문 해시가 일치하면 재색인 건너뜀
             if existing_metadata and all(item.get("source_hash") == source_hash for item in existing_metadata):
                 continue
+
             if existing.get("ids"):
                 collection.delete(where={"paper_id": indexed_paper_id})
+
             ids: list[str] = []
             documents: list[str] = []
             metadata: list[dict[str, Any]] = []
@@ -262,24 +269,48 @@ class ChromaFullTextStore:
                         "source_hash": source_hash,
                     })
             if documents:
-                embeddings = self._model().encode(documents, normalize_embeddings=bool(STORAGE_CONFIG["normalize_embeddings"]), show_progress_bar=False)
+                embeddings = self._model().encode(
+                    documents,
+                    normalize_embeddings=bool(STORAGE_CONFIG["normalize_embeddings"]),
+                    show_progress_bar=False
+                )
                 collection.upsert(ids=ids, documents=documents, embeddings=embeddings.tolist(), metadatas=metadata)
                 added += len(documents)
         return added
 
     def search(self, query: str, *, limit: int = 5, paper_id: str | None = None) -> list[dict[str, object]]:
+        """질의와 가장 유사한 본문 청크를 벡터 검색한다. (검색 지연 최적화 적용)"""
         if not query.strip():
             raise ValueError("본문 검색어가 비어 있습니다.")
         selected_paper_id = paper_id.strip() if paper_id else None
-        self.ensure_index(paper_id=selected_paper_id)
+
         collection = self._collection()
         where = {"paper_id": selected_paper_id} if selected_paper_id else None
+
+        # [최적화 핵심] 매번 ensure_index()를 돌리지 않고, 기존에 색인된 데이터가 없을 때만 방어적으로 색인
         available = len(collection.get(where=where).get("ids", [])) if where else collection.count()
+        if available == 0 and selected_paper_id:
+            self.ensure_index(paper_id=selected_paper_id)
+            available = len(collection.get(where=where).get("ids", []))
+
         if available == 0:
             return []
-        embedding = self._model().encode([query], normalize_embeddings=bool(STORAGE_CONFIG["normalize_embeddings"]), show_progress_bar=False).tolist()[0]
-        result = collection.query(query_embeddings=[embedding], n_results=min(limit, available), where=where, include=["documents", "metadatas", "distances"])
+
+        embedding = self._model().encode(
+            [query],
+            normalize_embeddings=bool(STORAGE_CONFIG["normalize_embeddings"]),
+            show_progress_bar=False
+        ).tolist()[0]
+
+        result = collection.query(
+            query_embeddings=[embedding],
+            n_results=min(limit, available),
+            where=where,
+            include=["documents", "metadatas", "distances"]
+        )
         return [
             {"id": item_id, "document": document, "metadata": metadata, "distance": distance}
-            for item_id, document, metadata, distance in zip(result["ids"][0], result["documents"][0], result["metadatas"][0], result["distances"][0])
+            for item_id, document, metadata, distance in zip(
+                result["ids"][0], result["documents"][0], result["metadatas"][0], result["distances"][0]
+            )
         ]
