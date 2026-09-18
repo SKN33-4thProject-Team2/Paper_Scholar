@@ -67,6 +67,11 @@ class WorkflowState(TypedDict, total=False):
     prioritize_primary_keyword: bool
     research_question: str
     related_paper_title: str
+    pending_intent: str
+    pending_save_count: int
+    # The paper selected by Deep Search is conversational context.  It must
+    # survive the next CLI turn even when Deep Research cannot finish.
+    last_context_paper_title: str
     last_research_paper_title: str
     paper_ids: list[str]
     download_paper_ids: list[str]

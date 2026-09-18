@@ -49,6 +49,7 @@ def fake_nodes():
             }
         return {
             "paper_ids": state.get("paper_ids") or ["paper-1"],
+            "last_context_paper_title": "RAG Paper",
             "sources": [
                 {
                     "label": "S1",
@@ -188,6 +189,17 @@ class StateGraphTest(unittest.TestCase):
         state["selection_source"] = "search"
         self.assertEqual(router.decide(state).steps, ["download", "extract"])
 
+    def test_numbered_research_normalizes_question_for_answerer(self):
+        router = SupervisorRouter(use_llm=False)
+        state = initial_state("2번 논문 설명해줘")
+        state["selection_candidates"] = PAPERS
+        state["selection_source"] = "deep_search"
+        decision = router.decide(state)
+
+        self.assertEqual(decision.steps, ["deep_search"])
+        self.assertEqual(decision.deep_search_paper_id, "paper-2")
+        self.assertEqual(decision.research_question, "선택한 논문 설명해줘")
+
     def test_extract_without_target_asks_human(self):
         result = self.graph.invoke(
             initial_state("논문 추출해줘"),
@@ -196,6 +208,33 @@ class StateGraphTest(unittest.TestCase):
         self.assertEqual(result["node_history"], ["human", "finish"])
         self.assertTrue(result["human_input_required"])
         self.assertIn("어느 논문", result["response"])
+
+    def test_human_followup_resumes_related_save_request(self):
+        config = {"configurable": {"thread_id": "test-human-followup"}}
+        first = self.graph.invoke(
+            initial_state("관련 논문 3개 저장"), config=config
+        )
+        self.assertEqual(first["node_history"], ["human", "finish"])
+        self.assertTrue(first["human_input_required"])
+
+        second = self.graph.invoke(
+            initial_state("딥러닝 모델과 관련된 논문"), config=config
+        )
+        self.assertEqual(
+            second["node_history"], ["keyword", "search", "download", "finish"]
+        )
+        self.assertEqual(second["search_result_limit"], 3)
+        self.assertEqual(second["save_paper_count"], 3)
+        self.assertEqual(len(second["selected_papers"]), 3)
+        self.assertEqual(second["pending_intent"], "")
+        self.assertEqual(second["errors"], [])
+
+    def test_similar_related_save_phrases_keep_pending_intent(self):
+        router = SupervisorRouter(use_llm=False)
+        for query in ("관련된 논문 3개 저장", "연관 논문 2편 보관"):
+            decision = router.decide(initial_state(query))
+            self.assertEqual(decision.steps, ["human"])
+            self.assertEqual(decision.pending_intent, "related_search_save")
 
     def test_explainable_inventory_then_selected_paper_runs_deep_search_and_research(self):
         config = {"configurable": {"thread_id": "test-deep-research"}}
@@ -206,6 +245,24 @@ class StateGraphTest(unittest.TestCase):
         self.assertEqual(second["node_history"], ["deep_search", "deep_research", "finish"])
         self.assertEqual(second["errors"], [])
         self.assertIn("근거 기반으로 설명했습니다", second["response"])
+
+    def test_related_followup_uses_selected_paper_and_downloads_saved_papers(self):
+        """'위에 관련'은 직전 선택 논문을 주제로 PDF까지 저장한다."""
+
+        config = {"configurable": {"thread_id": "test-related-followup"}}
+        self.graph.invoke(initial_state("설명 가능한 논문이 뭐가 있어?"), config=config)
+        self.graph.invoke(initial_state("1번 논문 설명해줘"), config=config)
+        result = self.graph.invoke(
+            initial_state("위에 관련 논문 5개 찾아서 저장해줘"), config=config
+        )
+
+        self.assertEqual(
+            result["node_history"], ["keyword", "search", "download", "finish"]
+        )
+        self.assertEqual(result["related_paper_title"], "RAG Paper")
+        self.assertEqual(result["downloaded_paths"], ["paper-1.pdf"])
+        self.assertEqual(len(result["selected_papers"]), 5)
+        self.assertEqual(result["errors"], [])
 
     def test_summary_keeps_only_required_data_dependencies(self):
         result = self.graph.invoke(

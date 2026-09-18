@@ -263,6 +263,27 @@ class TranslateTool:
                         for part in split_chunks
                     )
 
+                if exc.reason == "output_truncated_unsplittable":
+                    self._progress(
+                        f"    [Ollama] {index}/{total} 청크를 더 나눌 수 없어 "
+                        "해당 구간은 원문으로 유지합니다."
+                    )
+                    return chunk
+
+                # 수식·표 보호 토큰을 모델이 끝까지 보존하지 못하는 경우,
+                # 해당 작은 청크 전체를 원문으로 보존해 뒤 청크와 Summary
+                # 단계가 계속 진행되도록 한다. 구조를 훼손한 번역문을
+                # 저장하는 것보다 일부 원문을 남기는 편이 안전하다.
+                if (
+                    exc.reason == "protected_markup_changed"
+                    and attempt >= max_retries
+                ):
+                    self._progress(
+                        f"    [Ollama] {index}/{total} 청크의 보호 마크업을 "
+                        "보존할 수 없어 해당 구간은 원문으로 유지합니다."
+                    )
+                    return chunk
+
                 if not exc.retryable or attempt >= max_retries:
                     raise
                 delay = retry_backoff * (2**attempt)

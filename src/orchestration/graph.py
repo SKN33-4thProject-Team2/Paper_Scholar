@@ -249,6 +249,8 @@ def build_graph(
         routed["explain_paper_rank"] = decision.explain_paper_rank
         routed["prioritize_primary_keyword"] = decision.prioritize_primary_keyword
         routed["research_question"] = decision.research_question
+        routed["pending_intent"] = decision.pending_intent
+        routed["pending_save_count"] = decision.pending_save_count
         if decision.related_paper_title:
             routed["related_paper_title"] = decision.related_paper_title
         return routed

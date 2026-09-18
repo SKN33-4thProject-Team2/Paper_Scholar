@@ -620,6 +620,7 @@ class DeepSearchNode:
         )
         return {
             "paper_ids": [paper_id],
+            "last_context_paper_title": str(paper.get("title") or paper_id).strip(),
             "sources": sources,
             "deep_search_references": references,
             "deep_search_candidates": [],

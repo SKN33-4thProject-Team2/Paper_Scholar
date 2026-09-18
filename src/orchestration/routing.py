@@ -41,6 +41,8 @@ class SupervisorDecision(BaseModel):
     prioritize_primary_keyword: bool = False
     research_question: str = ""
     related_paper_title: str = ""
+    pending_intent: str = ""
+    pending_save_count: int = Field(default=0, ge=0, le=15)
     human_question: str = ""
 
 
@@ -107,12 +109,32 @@ _GENERIC_REQUESTS = {
 }
 
 
-def _human_decision(reason: str, question: str) -> SupervisorDecision:
+def _human_decision(
+    reason: str,
+    question: str,
+    *,
+    pending_intent: str = "",
+    pending_save_count: int = 0,
+) -> SupervisorDecision:
     return SupervisorDecision(
         steps=["human"],
         reason=reason,
         human_question=question,
+        pending_intent=pending_intent,
+        pending_save_count=pending_save_count,
     )
+
+
+def _normalize_selected_research_question(query: str) -> str:
+    """Remove a list-number target before sending the question to the LLM."""
+
+    normalized = re.sub(
+        r"^\s*\d+\s*번\s*(?:논문\s*(?:을|의)?\s*)?",
+        "선택한 논문 ",
+        query.strip(),
+        count=1,
+    )
+    return re.sub(r"\s+", " ", normalized).strip()
 
 
 class SupervisorRouter:
@@ -148,6 +170,52 @@ class SupervisorRouter:
             state.get("deep_research_paper_id") or ""
         ).strip()
         has_active_paper = bool(state.get("paper_ids") or active_deep_research_paper_id)
+
+        # 짧은 인사는 도구를 호출하지 않고 챗봇 소개로 응답한다.
+        greeting_only = normalized_query in {
+            "안녕",
+            "안녕하세요",
+            "하이",
+            "hello",
+            "hi",
+            "반가워",
+            "반갑습니다",
+        }
+        if greeting_only:
+            return _human_decision(
+                "논문 챗봇 인사 응답",
+                "안녕하세요! 저는 학술 논문 검색·추출·번역·요약을 도와드리는 논문 챗봇입니다.",
+            )
+
+        # 논문 작업과 무관한 일상 질문은 외부 검색이나 Agent 실행으로
+        # 넘기지 않고, 지원 범위를 짧게 안내한다.
+        out_of_scope_terms = (
+            "날씨",
+            "뭐 먹",
+            "뭘 먹",
+            "먹었어",
+            "맛집",
+            "주가",
+            "주식",
+        )
+        paper_context_terms = (
+            "논문",
+            "arxiv",
+            "학술",
+            "검색",
+            "번역",
+            "요약",
+            "추출",
+            "저장",
+            "설명",
+        )
+        if any(term in normalized_query for term in out_of_scope_terms) and not any(
+            term in normalized_query for term in paper_context_terms
+        ):
+            return _human_decision(
+                "논문 도메인과 무관한 질문",
+                "저희는 학술 논문 검색·분석 챗봇이라 관련 정보를 드릴 수 없습니다. 논문 관련 질문을 입력해 주세요.",
+            )
 
         # Tool name만 말하거나 대명사만 남긴 요청은 대상·주제를 추측하면
         # 안 된다. 기존 기능을 실행하지 않고 Human-in-the-Loop으로 보낸다.
@@ -253,14 +321,50 @@ class SupervisorRouter:
         )
         wants_save = any(term in query for term in ("저장", "보관"))
 
+        # 주제가 빠진 관련 논문 저장 요청은 먼저 되묻되, 원래 작업과
+        # 저장 개수를 State에 보관해 다음 사용자 입력에서 이어서 실행한다.
+        pending_intent = str(state.get("pending_intent") or "").strip()
+        if pending_intent == "related_search_save":
+            save_count = int(state.get("pending_save_count") or 0)
+            if not 1 <= save_count <= 15:
+                return _human_decision(
+                    "관련 논문 저장 개수가 유효하지 않음",
+                    "저장할 관련 논문 수를 1~15편 사이로 알려주세요.",
+                    pending_intent=pending_intent,
+                    pending_save_count=save_count,
+                )
+            return SupervisorDecision(
+                steps=["keyword", "search", "download"],
+                reason="추가로 받은 주제로 관련 논문 검색·저장 재개",
+                search_result_limit=save_count,
+                save_paper_count=save_count,
+                prioritize_primary_keyword=True,
+            )
+
         # "위에 관련 논문 5개 찾아서 저장해줘"는 직전 심층 설명 논문을
         # 주제로 이어받는다. 직전 대상이 없으면 주제를 추측하지 않는다.
-        related_followup = wants_save and any(
-            phrase in normalized_query
-            for phrase in ("위에 관련", "위의 관련", "방금 관련", "앞의 관련")
+        related_followup = wants_save and (
+            any(
+                phrase in normalized_query
+                for phrase in ("위에 관련", "위의 관련", "방금 관련", "앞의 관련")
+            )
+            or re.search(
+                r"(?:위에|위의|방금|앞에서|앞에)\s*"
+                r"(?:설명한\s*)?논문\s*(?:과|의)?\s*(?:관련|연관)",
+                normalized_query,
+            )
+            is not None
         )
         if related_followup:
-            related_title = str(state.get("last_research_paper_title") or "").strip()
+            # Deep Search knows the selected paper before answer generation.
+            # Prefer that title so a follow-up still works if Deep Research
+            # returns insufficient evidence; retain the older value for
+            # conversations created before this context field existed.
+            related_title = str(
+                state.get("last_context_paper_title")
+                or state.get("last_research_paper_title")
+                or ""
+            ).strip()
             count_match = re.search(r"(\d+)\s*(?:개|편)", normalized_query)
             save_count = int(count_match.group(1)) if count_match else 0
             if not related_title:
@@ -280,6 +384,19 @@ class SupervisorRouter:
                 save_paper_count=save_count,
                 prioritize_primary_keyword=True,
                 related_paper_title=related_title,
+            )
+
+        related_topic_missing = wants_save and re.match(
+            r"^\s*(?:관련|연관)\s*(?:된\s*)?논문", normalized_query
+        ) is not None
+        if related_topic_missing:
+            count_match = re.search(r"(\d+)\s*(?:개|편)", normalized_query)
+            save_count = int(count_match.group(1)) if count_match else 0
+            return _human_decision(
+                "관련 논문의 검색 주제가 없음",
+                "어떤 주제와 관련된 논문을 저장할까요? 예: '딥러닝 모델과 관련된 논문'.",
+                pending_intent="related_search_save",
+                pending_save_count=save_count,
             )
 
         # "LLM 논문 10개 찾고 그중 5개 저장한 뒤 최상위 1개 설명"처럼
@@ -337,6 +454,9 @@ class SupervisorRouter:
         )
         deep_target_number = selected_numbers[-1] if selected_numbers else 0
         deep_target_id = candidate_id(deep_target_number)
+        selected_research_question = _normalize_selected_research_question(
+            state["query"]
+        )
 
         # 직전 Deep Research에서 선택한 한 편을 기준으로 하는 짧은 후속
         # 요약은 새 번역·요약 산출물 파이프라인이 아니다. 같은 논문의 근거를
@@ -376,6 +496,9 @@ class SupervisorRouter:
                 deep_search_paper_id=(
                     deep_target_id if asks_direct_research else ""
                 ),
+                research_question=(
+                    selected_research_question if asks_direct_research else ""
+                ),
             )
 
         # "3번 5번 다운로드 후 5번 설명"처럼 한 요청 안에서 작업 대상이
@@ -392,6 +515,7 @@ class SupervisorRouter:
                 selected_paper_ids=selected_candidate_ids,
                 download_paper_ids=selected_candidate_ids,
                 deep_search_paper_id=deep_target_id or selected_candidate_ids[-1],
+                research_question=selected_research_question,
             )
 
         if has_direct_research_target and asks_direct_research:
@@ -400,6 +524,7 @@ class SupervisorRouter:
                 reason="지정된 추출 논문에서 심층 질문 근거 검색",
                 selected_paper_ids=([deep_target_id] if deep_target_id else []),
                 deep_search_paper_id=deep_target_id,
+                research_question=selected_research_question,
             )
 
         # 추출 요청은 LLM에게 재판단시키지 않는다. 선택 논문이 이미
