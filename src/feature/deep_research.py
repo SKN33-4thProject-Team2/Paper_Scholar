@@ -10,7 +10,6 @@ import json
 import os
 import re
 import sqlite3
-import sys
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -658,20 +657,15 @@ class LangChainPaperAnswerer:
             f"질문: {question}"
         )
 
-        print("\n[답변 내용]")
         collected_chunks = []
         try:
             for chunk in self.model.stream(prompt):
                 text_piece = getattr(chunk, "content", str(chunk))
-                sys.stdout.write(text_piece)
-                sys.stdout.flush()
                 collected_chunks.append(text_piece)
-            print()
             full_answer = "".join(collected_chunks).strip()
         except Exception:
             resp = self.model.invoke(prompt)
             full_answer = str(getattr(resp, "content", resp)).strip()
-            print(full_answer)
 
         return {
             "answer": full_answer,
