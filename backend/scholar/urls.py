@@ -1,6 +1,8 @@
 from django.urls import path
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
+from .supervisor_views import SupervisorPlanAPIView
+
 from .views import (
     ArxivSearchAPIView,
     PaperDetailAPIView,
@@ -23,6 +25,7 @@ app_name = "scholar"
 
 urlpatterns = [
     path("health/", health_check, name="health"),
+    path("supervisor/plan/", SupervisorPlanAPIView.as_view(), name="supervisor-plan"),
     path("auth/register/", RegisterAPIView.as_view(), name="auth-register"),
     path("auth/token/", TokenObtainPairView.as_view(), name="auth-token"),
     path(
