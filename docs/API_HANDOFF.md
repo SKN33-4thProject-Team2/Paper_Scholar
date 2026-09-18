@@ -55,6 +55,44 @@ Authorization: Bearer <access-token>
 | GET | `/api/papers/{arxiv_id}/translations/` | 번역 목록 조회 |
 | GET | `/api/jobs/{job_id}/` | 비동기 작업 상태 조회 |
 
+## Supervisor 실행 계획
+
+`POST /api/supervisor/plan/`
+
+자연어 복합 요청을 기존 API 호출 순서로 변환합니다. Supervisor는 논문 처리 기능을 직접 구현하거나 실행하지 않고, 프론트가 기존 검색·저장·본문 추출·요약·번역 API를 호출할 수 있는 검증된 계획만 반환합니다.
+
+```json
+{
+  "message": "RAG 논문 하나와 비슷한 논문 3편을 요약·번역해서 내 서재에 저장해줘"
+}
+```
+
+응답 예시:
+
+```json
+{
+  "query": "retrieval augmented generation",
+  "max_results": 4,
+  "related_count": 3,
+  "actions": ["search", "save", "extract", "summarize", "translate"],
+  "save_to_library": true,
+  "extract_content": true,
+  "summarize": true,
+  "translate": true,
+  "target_language": "ko",
+  "needs_clarification": false,
+  "clarification_question": ""
+}
+```
+
+주제가 없는 요청은 도구를 실행하지 않고 `needs_clarification: true`와 추가 질문을 반환합니다. 현재 웹 화면은 계획을 받은 뒤 아래 기존 API만 순서대로 호출합니다.
+
+1. `/api/search/`
+2. `/api/papers/save/`
+3. `/api/jobs/{job_id}/`
+4. `/api/papers/{arxiv_id}/summarize/`
+5. `/api/papers/{arxiv_id}/translate/`
+
 검색 요청 예시:
 
 ```json
