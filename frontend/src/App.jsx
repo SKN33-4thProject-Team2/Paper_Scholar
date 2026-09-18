@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { getHealth, getPaper, getPapers } from './api'
 import PaperDetail from './PaperDetail'
 import SearchPanel from './SearchPanel'
+import SupervisorChat from './SupervisorChat'
 import AuthPage from './AuthPage'
 import { useAuth } from './auth-context'
 import './App.css'
@@ -85,6 +86,12 @@ function App() {
   }, [authLoading, user])
 
   const libraryLoading = loading || loadedUserId !== user?.id
+  const pageTitles = {
+    library: ['내 논문 서재', 'MySQL에 저장된 논문과 처리 상태를 한곳에서 확인합니다.'],
+    search: ['arXiv 논문 검색', '새 논문을 검색하고 저장할 자료를 살펴봅니다.'],
+    supervisor: ['Supervisor 챗봇', '한 문장으로 여러 논문 작업을 순서대로 실행합니다.'],
+  }
+  const [pageTitle, pageDescription] = pageTitles[activeView]
 
   const selectPaper = async (arxivId) => {
     setSelectedId(arxivId)
@@ -112,12 +119,8 @@ function App() {
       <header className="app-header">
         <div>
           <span className="eyebrow">Paper Scholar</span>
-          <h1>{activeView === 'library' ? '내 논문 서재' : 'arXiv 논문 검색'}</h1>
-          <p>
-            {activeView === 'library'
-              ? 'MySQL에 저장된 논문과 처리 상태를 한곳에서 확인합니다.'
-              : '새 논문을 검색하고 저장할 자료를 살펴봅니다.'}
-          </p>
+          <h1>{pageTitle}</h1>
+          <p>{pageDescription}</p>
         </div>
         <div className="app-header__account">
           <StatusBadge tone={health === 'online' ? 'success' : health === 'offline' ? 'danger' : 'neutral'}>
@@ -143,6 +146,13 @@ function App() {
           onClick={() => setActiveView('search')}
         >
           arXiv 검색
+        </button>
+        <button
+          type="button"
+          className={activeView === 'supervisor' ? 'view-tabs__active' : ''}
+          onClick={() => setActiveView('supervisor')}
+        >
+          Supervisor
         </button>
       </nav>
 
@@ -194,8 +204,10 @@ function App() {
             />
           </section>
         </div>
-      ) : (
+      ) : activeView === 'search' ? (
         <SearchPanel onSaved={loadPapers} />
+      ) : (
+        <SupervisorChat onSaved={loadPapers} />
       )}
     </main>
   )

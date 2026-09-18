@@ -193,3 +193,11 @@ export function savePapers(papers, extractContent = true) {
 export function getProcessingJob(jobId) {
   return request(`/jobs/${encodeURIComponent(jobId)}/`)
 }
+
+export function createSupervisorPlan(message) {
+  return request('/supervisor/plan/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message }),
+  })
+}
