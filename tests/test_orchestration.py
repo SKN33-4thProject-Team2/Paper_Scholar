@@ -9,7 +9,7 @@ SRC_ROOT = Path(__file__).resolve().parents[1] / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from orchestration.adapters import KeywordNode
+from orchestration.adapters import ArxivSearchNode, KeywordNode
 from orchestration.evaluation import (
     citation_precision,
     reciprocal_rank,
@@ -23,6 +23,13 @@ from orchestration.state import initial_state
 
 
 PAPER = {"paper_id": "paper-1", "id": "paper-1", "title": "RAG Paper"}
+PAPERS = [
+    PAPER,
+    *[
+        {"paper_id": f"paper-{index}", "id": f"paper-{index}", "title": f"Paper {index}"}
+        for index in range(2, 16)
+    ],
+]
 
 
 def fake_nodes():
@@ -42,6 +49,7 @@ def fake_nodes():
             }
         return {
             "paper_ids": state.get("paper_ids") or ["paper-1"],
+            "last_context_paper_title": "RAG Paper",
             "sources": [
                 {
                     "label": "S1",
@@ -58,14 +66,33 @@ def fake_nodes():
             "node_history": ["deep_search"],
         }
 
+    def search(state):
+        limit = int(state.get("search_result_limit", 0)) or 1
+        papers = PAPERS[:limit]
+        save_count = int(state.get("save_paper_count", 0))
+        if not save_count:
+            return {
+                "search_results": papers,
+                "selection_candidates": papers,
+                "selection_source": "search",
+                "node_history": ["search"],
+            }
+        saved_papers = papers[:save_count]
+        explain_paper = saved_papers[int(state.get("explain_paper_rank", 1)) - 1]
+        return {
+            "search_results": papers,
+            "selected_papers": saved_papers,
+            "selection_candidates": papers,
+            "selection_source": "search",
+            "paper_ids": [explain_paper["id"]],
+            "download_paper_ids": [paper["id"] for paper in saved_papers],
+            "deep_search_paper_id": explain_paper["id"],
+            "node_history": ["search"],
+        }
+
     return {
         "keyword": lambda state: {"keywords": ["RAG"], "node_history": ["keyword"]},
-        "search": lambda state: {
-            "search_results": [PAPER],
-            "selection_candidates": [PAPER],
-            "selection_source": "search",
-            "node_history": ["search"],
-        },
+        "search": search,
         "library": lambda state: {
             "library_results": [PAPER],
             "selection_candidates": [PAPER],
@@ -73,7 +100,7 @@ def fake_nodes():
             "node_history": ["library"],
         },
         "download": lambda state: {
-            "paper_ids": state.get("download_paper_ids") or ["paper-1"],
+            "paper_ids": state.get("paper_ids") or ["paper-1"],
             "downloaded_paths": ["paper-1.pdf"],
             "node_history": ["download"],
         },
@@ -113,6 +140,36 @@ class StateGraphTest(unittest.TestCase):
         self.assertEqual(result["node_history"], ["keyword", "search", "finish"])
         self.assertIn("RAG Paper", result["response"])
 
+    def test_composite_request_saves_top_five_and_explains_top_one(self):
+        result = self.graph.invoke(
+            initial_state(
+                "LLM 관련 논문 10개 찾고 그 중 5개 저장하고 최상위 논문 1개 설명해줘"
+            ),
+            config={"configurable": {"thread_id": "test-ranked-composite"}},
+        )
+        self.assertEqual(
+            result["node_history"],
+            [
+                "keyword",
+                "search",
+                "download",
+                "extract",
+                "deep_search",
+                "deep_research",
+                "finish",
+            ],
+        )
+        self.assertEqual(len(result["search_results"]), 10)
+        self.assertEqual(len(result["selected_papers"]), 5)
+        self.assertEqual(result["download_paper_ids"], [f"paper-{index}" for index in range(1, 6)])
+        self.assertEqual(result["paper_ids"], ["paper-1"])
+        self.assertTrue(result["prioritize_primary_keyword"])
+        self.assertEqual(
+            result["research_question"],
+            "선택된 최상위 논문의 연구 목적, 방법론, 핵심 결과를 본문 근거로 설명해줘.",
+        )
+        self.assertEqual(result["errors"], [])
+
     def test_selected_downloaded_paper_extracts_without_other_stages(self):
         state = initial_state("1번 논문 추출해줘")
         state["selection_candidates"] = [PAPER]
@@ -132,6 +189,17 @@ class StateGraphTest(unittest.TestCase):
         state["selection_source"] = "search"
         self.assertEqual(router.decide(state).steps, ["download", "extract"])
 
+    def test_numbered_research_normalizes_question_for_answerer(self):
+        router = SupervisorRouter(use_llm=False)
+        state = initial_state("2번 논문 설명해줘")
+        state["selection_candidates"] = PAPERS
+        state["selection_source"] = "deep_search"
+        decision = router.decide(state)
+
+        self.assertEqual(decision.steps, ["deep_search"])
+        self.assertEqual(decision.deep_search_paper_id, "paper-2")
+        self.assertEqual(decision.research_question, "선택한 논문 설명해줘")
+
     def test_extract_without_target_asks_human(self):
         result = self.graph.invoke(
             initial_state("논문 추출해줘"),
@@ -140,6 +208,33 @@ class StateGraphTest(unittest.TestCase):
         self.assertEqual(result["node_history"], ["human", "finish"])
         self.assertTrue(result["human_input_required"])
         self.assertIn("어느 논문", result["response"])
+
+    def test_human_followup_resumes_related_save_request(self):
+        config = {"configurable": {"thread_id": "test-human-followup"}}
+        first = self.graph.invoke(
+            initial_state("관련 논문 3개 저장"), config=config
+        )
+        self.assertEqual(first["node_history"], ["human", "finish"])
+        self.assertTrue(first["human_input_required"])
+
+        second = self.graph.invoke(
+            initial_state("딥러닝 모델과 관련된 논문"), config=config
+        )
+        self.assertEqual(
+            second["node_history"], ["keyword", "search", "download", "finish"]
+        )
+        self.assertEqual(second["search_result_limit"], 3)
+        self.assertEqual(second["save_paper_count"], 3)
+        self.assertEqual(len(second["selected_papers"]), 3)
+        self.assertEqual(second["pending_intent"], "")
+        self.assertEqual(second["errors"], [])
+
+    def test_similar_related_save_phrases_keep_pending_intent(self):
+        router = SupervisorRouter(use_llm=False)
+        for query in ("관련된 논문 3개 저장", "연관 논문 2편 보관"):
+            decision = router.decide(initial_state(query))
+            self.assertEqual(decision.steps, ["human"])
+            self.assertEqual(decision.pending_intent, "related_search_save")
 
     def test_explainable_inventory_then_selected_paper_runs_deep_search_and_research(self):
         config = {"configurable": {"thread_id": "test-deep-research"}}
@@ -150,6 +245,24 @@ class StateGraphTest(unittest.TestCase):
         self.assertEqual(second["node_history"], ["deep_search", "deep_research", "finish"])
         self.assertEqual(second["errors"], [])
         self.assertIn("근거 기반으로 설명했습니다", second["response"])
+
+    def test_related_followup_uses_selected_paper_and_downloads_saved_papers(self):
+        """'위에 관련'은 직전 선택 논문을 주제로 PDF까지 저장한다."""
+
+        config = {"configurable": {"thread_id": "test-related-followup"}}
+        self.graph.invoke(initial_state("설명 가능한 논문이 뭐가 있어?"), config=config)
+        self.graph.invoke(initial_state("1번 논문 설명해줘"), config=config)
+        result = self.graph.invoke(
+            initial_state("위에 관련 논문 5개 찾아서 저장해줘"), config=config
+        )
+
+        self.assertEqual(
+            result["node_history"], ["keyword", "search", "download", "finish"]
+        )
+        self.assertEqual(result["related_paper_title"], "RAG Paper")
+        self.assertEqual(result["downloaded_paths"], ["paper-1.pdf"])
+        self.assertEqual(len(result["selected_papers"]), 5)
+        self.assertEqual(result["errors"], [])
 
     def test_summary_keeps_only_required_data_dependencies(self):
         result = self.graph.invoke(
@@ -204,6 +317,43 @@ class StateGraphTest(unittest.TestCase):
         self.assertEqual(result["keywords"], ["alternative RAG"])
         self.assertIn("retrieval augmented generation", prompts[0])
         self.assertIn("겹치지 않는 대체 학술 용어", prompts[0])
+
+    def test_ranked_composite_search_uses_only_primary_keyword(self):
+        class FakeSearchBot:
+            def __init__(self):
+                self.query = ""
+
+            def search_papers(self, query, *, sort_by, max_results):
+                self.query = query
+                self.assertEqual(sort_by, "r")
+                self.assertEqual(max_results, 10)
+                return PAPERS[:10]
+
+            def save_papers(self, papers, *, extract_content=True):
+                self.assertEqual(len(papers), 5)
+                self.assertFalse(extract_content)
+
+            def assertEqual(self, left, right):
+                if left != right:
+                    raise AssertionError(f"{left!r} != {right!r}")
+
+            def assertFalse(self, value):
+                if value:
+                    raise AssertionError("expected False")
+
+        bot = FakeSearchBot()
+        node = ArxivSearchNode(factory=lambda: bot)
+        node(
+            {
+                "query": "LLM 관련 논문 10개 찾고 그 중 5개 저장하고 최상위 논문 1개 설명해줘",
+                "keywords": ["Large Language Models", "Natural Language Processing"],
+                "search_result_limit": 10,
+                "save_paper_count": 5,
+                "explain_paper_rank": 1,
+                "prioritize_primary_keyword": True,
+            }
+        )
+        self.assertEqual(bot.query, '"Large Language Models"')
 
 
 class EvaluatorTest(unittest.TestCase):

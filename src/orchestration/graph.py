@@ -244,6 +244,15 @@ def build_graph(
             routed["paper_ids"] = list(decision.selected_paper_ids)
         routed["download_paper_ids"] = list(decision.download_paper_ids)
         routed["deep_search_paper_id"] = decision.deep_search_paper_id
+        routed["search_result_limit"] = decision.search_result_limit
+        routed["save_paper_count"] = decision.save_paper_count
+        routed["explain_paper_rank"] = decision.explain_paper_rank
+        routed["prioritize_primary_keyword"] = decision.prioritize_primary_keyword
+        routed["research_question"] = decision.research_question
+        routed["pending_intent"] = decision.pending_intent
+        routed["pending_save_count"] = decision.pending_save_count
+        if decision.related_paper_title:
+            routed["related_paper_title"] = decision.related_paper_title
         return routed
 
     def finish(state: WorkflowState) -> dict[str, Any]:

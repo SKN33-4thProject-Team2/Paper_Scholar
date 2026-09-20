@@ -111,6 +111,9 @@ class KeywordNode:
 
     def __call__(self, state: WorkflowState) -> dict[str, Any]:
         topic = state["query"]
+        related_paper_title = str(state.get("related_paper_title") or "").strip()
+        if related_paper_title:
+            topic = f"{related_paper_title} 관련 학술 논문"
         if int(state.get("retry_counts", {}).get("search", 0)) > 0:
             previous = ", ".join(state.get("keywords", []))
             topic = (
@@ -148,15 +151,57 @@ class ArxivSearchNode:
             term for term in terms if term.strip().casefold() not in _GENERIC_KEYWORD_BLOCKLIST
         ]
         terms = filtered_terms or terms
+        if state.get("prioritize_primary_keyword") and terms:
+            # 복합 요청의 순위 선택은 첫 핵심 주제어를 기준으로 한다. 부가
+            # 키워드까지 OR로 넓히면 일반 NLP 논문이 상위에 섞일 수 있다.
+            terms = terms[:1]
         query = " OR ".join(f'"{term}"' for term in terms)
 
         raw_query = state["query"]
+        planned_limit = int(state.get("search_result_limit", 0))
         count_match = _COUNT_PATTERN.search(raw_query)
-        max_results = int(count_match.group(1)) if count_match else self._max_results
+        max_results = (
+            planned_limit
+            if planned_limit > 0
+            else int(count_match.group(1)) if count_match else self._max_results
+        )
         max_results = max(1, min(max_results, 15))
         sort_by = "n" if any(term in raw_query for term in _LATEST_TERMS) else "r"
 
         papers = list(self.bot.search_papers(query, sort_by=sort_by, max_results=max_results))
+        save_count = int(state.get("save_paper_count", 0))
+        if save_count:
+            saved_papers = papers[:save_count]
+            if saved_papers and hasattr(self.bot, "save_papers"):
+                try:
+                    # 복합 요청에서는 상위 N편만 메타데이터로 저장한다.
+                    # HTML 본문 추출은 PDF 추출 단계가 담당한다.
+                    self.bot.save_papers(saved_papers, extract_content=False)
+                except Exception:
+                    pass
+            explain_rank = int(state.get("explain_paper_rank", 0))
+            explain_paper = (
+                saved_papers[explain_rank - 1]
+                if 1 <= explain_rank <= len(saved_papers)
+                else None
+            )
+            explain_paper_id = str(
+                (explain_paper or {}).get("id") or ""
+            ).strip()
+            return {
+                "search_results": papers,
+                "selected_papers": saved_papers,
+                "selection_candidates": [_record(paper) for paper in papers],
+                "selection_source": "search",
+                "paper_ids": [explain_paper_id] if explain_paper_id else [],
+                "download_paper_ids": [
+                    str(paper.get("id") or "").strip()
+                    for paper in saved_papers
+                    if str(paper.get("id") or "").strip()
+                ],
+                "deep_search_paper_id": explain_paper_id,
+                "node_history": ["search"],
+            }
         # PaperExtractor resolves paper_id -> PDF file by looking the id up in
         # saved_papers.db, so search results must be persisted immediately —
         # otherwise a later download/extract step can save the PDF but never
@@ -530,7 +575,7 @@ class DeepSearchNode:
 
         try:
             payload = self.searcher.search_passages(
-                state["query"],
+                str(state.get("research_question") or state["query"]),
                 paper_id=paper_id,
                 limit=self._limit,
             )
@@ -575,6 +620,7 @@ class DeepSearchNode:
         )
         return {
             "paper_ids": [paper_id],
+            "last_context_paper_title": str(paper.get("title") or paper_id).strip(),
             "sources": sources,
             "deep_search_references": references,
             "deep_search_candidates": [],
@@ -680,7 +726,10 @@ class DeepResearchNode:
             "translation_text": evidence,
             "structured_summary": "",
         }
-        raw_result = self.answerer.answer(paper, state["query"])
+        raw_result = self.answerer.answer(
+            paper,
+            str(state.get("research_question") or state["query"]),
+        )
         result = (
             raw_result
             if isinstance(raw_result, dict)
@@ -715,5 +764,6 @@ class DeepResearchNode:
             "deep_research_answer": response,
             "deep_research_sources": sources,
             "deep_research_paper_id": paper_id,
+            "last_research_paper_title": title,
             "node_history": ["deep_research"],
         }

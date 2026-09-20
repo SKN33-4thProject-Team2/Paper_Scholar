@@ -61,6 +61,18 @@ class WorkflowState(TypedDict, total=False):
     max_steps: int
 
     keywords: list[str]
+    search_result_limit: int
+    save_paper_count: int
+    explain_paper_rank: int
+    prioritize_primary_keyword: bool
+    research_question: str
+    related_paper_title: str
+    pending_intent: str
+    pending_save_count: int
+    # The paper selected by Deep Search is conversational context.  It must
+    # survive the next CLI turn even when Deep Research cannot finish.
+    last_context_paper_title: str
+    last_research_paper_title: str
     paper_ids: list[str]
     download_paper_ids: list[str]
     deep_search_paper_id: str
@@ -107,6 +119,11 @@ def initial_state(
         "messages": [HumanMessage(content=normalized)],
         "query": normalized,
         "thread_id": thread_id,
+        "search_result_limit": 0,
+        "save_paper_count": 0,
+        "explain_paper_rank": 0,
+        "prioritize_primary_keyword": False,
+        "research_question": "",
         "paper_ids": list(paper_ids or []),
         "download_paper_ids": [],
         "deep_search_paper_id": "",

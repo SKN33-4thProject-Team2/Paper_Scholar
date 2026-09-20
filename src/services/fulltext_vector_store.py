@@ -270,7 +270,7 @@ class ChromaFullTextStore:
                     })
             if documents:
                 embeddings = self._model().encode(
-                    documents,
+                    [str(document) for document in documents],
                     normalize_embeddings=bool(STORAGE_CONFIG["normalize_embeddings"]),
                     show_progress_bar=False
                 )
@@ -280,9 +280,10 @@ class ChromaFullTextStore:
 
     def search(self, query: str, *, limit: int = 5, paper_id: str | None = None) -> list[dict[str, object]]:
         """질의와 가장 유사한 본문 청크를 벡터 검색한다. (검색 지연 최적화 적용)"""
-        if not query.strip():
+        normalized_query = str(query or "").strip()
+        if not normalized_query:
             raise ValueError("본문 검색어가 비어 있습니다.")
-        selected_paper_id = paper_id.strip() if paper_id else None
+        selected_paper_id = str(paper_id).strip() if paper_id else None
 
         collection = self._collection()
         where = {"paper_id": selected_paper_id} if selected_paper_id else None
@@ -297,7 +298,7 @@ class ChromaFullTextStore:
             return []
 
         embedding = self._model().encode(
-            [query],
+            [normalized_query],
             normalize_embeddings=bool(STORAGE_CONFIG["normalize_embeddings"]),
             show_progress_bar=False
         ).tolist()[0]
