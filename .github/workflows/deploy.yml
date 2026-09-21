@@ -19,25 +19,31 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          # 타임아웃 제한 시간을 40분으로 확장하여 빌드 중단 방지
+          timeout: 40m
+          command_timeout: 40m
           script: |
-            # 1. 서버 내 프로젝트 디렉토리로 이동 또는 클론
-            if [ -d "~/Paper_Scholar" ]; then
-              cd ~/Paper_Scholar
+            # 1. 소스코드 최신화
+            if [ -d "/home/ubuntu/Paper_Scholar" ]; then
+              cd /home/ubuntu/Paper_Scholar
               git pull origin main
             else
-              cd ~
+              cd /home/ubuntu
               git clone https://github.com/${{ github.repository }}.git
               cd Paper_Scholar
             fi
 
-            # 2. 캐시를 완전히 비우고 전체 requirements.txt 기반으로 이미지 강제 빌드
-            docker build --no-cache -t lizcha01/paper-scholar:latest .
+            # 2. 잔여 빌드 캐시 정리
+            docker builder prune -f
 
-            # 3. 기존 컨테이너 안전하게 중지 및 삭제
+            # 3. 도커 이미지 빌드
+            docker build -t lizcha01/paper-scholar:latest .
+
+            # 4. 기존 컨테이너 교체
             docker stop paper-scholar || true
             docker rm paper-scholar || true
 
-            # 4. DJANGO_SECRET_KEY 환경 변수를 주입하여 백그라운드 구동
+            # 5. 백그라운드 구동
             docker run -d \
               --name paper-scholar \
               -p 8000:8000 \

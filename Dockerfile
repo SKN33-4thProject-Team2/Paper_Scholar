@@ -26,11 +26,16 @@ ENV PATH="${JAVA_HOME}/bin:${PATH}"
 # 4. 컨테이너 내부 작업 디렉토리 설정
 WORKDIR /app
 
-# 5. pip 최신화 및 의존성 패키지 설치
-# --prefer-binary: 소스 컴파일 충돌 방지를 위해 리눅스용 빌드 완료본 우선 다운로드
+# 5. pip 최신화 및 의존성 패키지 단계별 설치
 COPY requirements.txt .
-RUN pip install --no-cache-dir --upgrade pip setuptools wheel && \
-    pip install --no-cache-dir --prefer-binary -r requirements.txt
+# pip, setuptools, wheel 최신화
+RUN pip install --no-cache-dir --upgrade pip setuptools wheel
+
+# CPU 전용 PyTorch 사전 설치 (수 GB에 달하는 CUDA 드라이버 유입 및 디스크 부족 방지)
+RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+
+# 나머지 모든 프로젝트 의존성 설치
+RUN pip install --no-cache-dir --prefer-binary -r requirements.txt
 
 # 6. 소스 코드 전체 복사 (.dockerignore 적용)
 COPY . .
