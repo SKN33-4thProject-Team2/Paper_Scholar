@@ -16,8 +16,16 @@ Including another URLconf
 """
 from django.contrib import admin
 from django.urls import include, path
+from django.views.generic import RedirectView
 
 urlpatterns = [
+    # 1. Django 관리자 콘솔
     path('admin/', admin.site.urls),
+
+    # 2. 사용자용 Scholar API 엔드포인트
     path('api/', include('scholar.urls')),
+
+    # 3. 루트(/) 진입 시 /admin/ 또는 /api/ 로 자동 리다이렉트
+    # (필요에 따라 url='/api/' 또는 url='/admin/'으로 선택)
+    path('', RedirectView.as_view(url='/admin/', permanent=False)),
 ]
