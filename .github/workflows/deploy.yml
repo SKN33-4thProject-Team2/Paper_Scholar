@@ -1,6 +1,5 @@
 name: Deploy to EC2 with Docker
 
-# deploy/setup-docker 브랜치로 푸시될 때 배포 파이프라인 실행
 on:
   push:
     branches: [ "main" ]
@@ -10,22 +9,18 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    # 1. 깃허브 코드 체크아웃
     - name: Checkout repository
       uses: actions/checkout@v4
 
-    # 2. 도커 빌드 환경(Buildx) 세팅
     - name: Set up Docker Buildx
       uses: docker/setup-buildx-action@v3
 
-    # 3. Docker Hub 로그인
     - name: Log in to Docker Hub
       uses: docker/login-action@v3
       with:
         username: ${{ secrets.DOCKERHUB_USERNAME }}
         password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-    # 4. 도커 이미지 빌드 및 Docker Hub에 푸시
     - name: Build and Push Docker Image
       uses: docker/build-push-action@v5
       with:
@@ -33,7 +28,6 @@ jobs:
         push: true
         tags: ${{ secrets.DOCKERHUB_USERNAME }}/paper-scholar:latest
 
-    # 5. EC2 서버에 SSH 접속 후 새 컨테이너 구동
     - name: Deploy to AWS EC2 via SSH
       uses: appleboy/ssh-action@v1.0.3
       with:
@@ -41,19 +35,23 @@ jobs:
         username: ubuntu
         key: ${{ secrets.EC2_SSH_KEY }}
         script: |
-          # Docker Hub 로그인 (비공개 저장소 이미지 다운로드용)
+          # Docker Hub 로그인
           echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
+
+          # 배포 전 디스크 부족 방지 정리
+          docker system prune -af || true
 
           # 최신 이미지 다운로드
           docker pull ${{ secrets.DOCKERHUB_USERNAME }}/paper-scholar:latest
 
-          # 기존 실행 중인 컨테이너가 있다면 중지 및 삭제
+          # 기존 컨테이너 중지 및 제거
           docker stop paper-scholar || true
           docker rm paper-scholar || true
 
-          # 새 컨테이너 백그라운드 구동 (포트 8000 바인딩)
+          # DJANGO_SECRET_KEY 환경변수를 주입하여 새 컨테이너 실행
           docker run -d \
             --name paper-scholar \
             -p 8000:8000 \
+            -e DJANGO_SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY }}' \
             --restart always \
             ${{ secrets.DOCKERHUB_USERNAME }}/paper-scholar:latest
