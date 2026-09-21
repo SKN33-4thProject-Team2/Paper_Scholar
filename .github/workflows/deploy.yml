@@ -1,56 +1,45 @@
-name: Deploy to EC2 with Docker
+name: Deploy to AWS EC2
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+      - name: Checkout source code
+        uses: actions/checkout@v3
 
       - name: Deploy to EC2 via SSH
-        uses: appleboy/ssh-action@v1.0.3
+        uses: appleboy/ssh-action@master
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          timeout: 40m
-          command_timeout: 40m
           script: |
-            # 1. 소스코드 최신화
-            if [ -d "/home/ubuntu/Paper_Scholar" ]; then
-              cd /home/ubuntu/Paper_Scholar
-              git pull origin main
-            else
-              cd /home/ubuntu
-              git clone https://github.com/${{ github.repository }}.git
-              cd Paper_Scholar
-            fi
-
-            # 2. 캐시 정리
-            docker builder prune -f
-
-            # 3. 최신 코드 기반 도커 이미지 빌드
-            docker build -t lizcha01/paper-scholar:latest .
-
-            # 4. 기존 컨테이너 안전 종료 및 삭제
-            docker stop paper-scholar || true
-            docker rm paper-scholar || true
-
-            # 5. DB 연결 정보 및 시크릿 키 주입하여 백그라운드 구동
-            docker run -d \
-              --name paper-scholar \
-              -p 8000:8000 \
-              --restart always \
-              -e DJANGO_SECRET_KEY="${{ secrets.DJANGO_SECRET_KEY }}" \
-              -e DB_NAME="${{ secrets.DB_NAME }}" \
-              -e DB_USER="${{ secrets.DB_USER }}" \
-              -e DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
-              -e DB_HOST="${{ secrets.DB_HOST }}" \
-              -e DB_PORT="${{ secrets.DB_PORT || '3306' }}" \
-              lizcha01/paper-scholar:latest
+            cd /home/ubuntu/Paper_Scholar
+            git pull origin main
+            
+            # 1. 환경변수 파일 생성
+            cat << EOF > .env
+            DB_HOST=${{ secrets.DB_HOST }}
+            DB_NAME=${{ secrets.DB_NAME }}
+            DB_USER=${{ secrets.DB_USER }}
+            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
+            DB_PORT=${{ secrets.DB_PORT }}
+            DJANGO_SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}
+            EOF
+            
+            # 2. 백엔드(Docker) 재시작
+            docker compose down
+            docker compose up --build -d
+            
+            # 3. 프론트엔드 프로세스 재시작
+            cd frontend
+            npm install
+            pkill -f "vite"
+            nohup npm run dev -- --host 0.0.0.0 --port 5173 > frontend.log 2>&1 &
+            
+            # 4. Nginx 재시작
+            sudo systemctl restart nginx
