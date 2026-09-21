@@ -95,6 +95,28 @@ def fetch_html(paper_id: str, timeout: int = 30) -> str:
     return response.text
 
 
+MIN_BODY_CHARS = 200  # 정상 논문의 짧은 각주 같은 조각은 넣지 않는다
+
+
+def _body_before_first_heading(root) -> tuple[str, str]:
+    """첫 h2/h3 앞의 본문 문단을 모은다. 섹션 제목 없이 쓴 짧은 논문은 본문 전체가 여기에 있다."""
+    nodes = []
+    for node in root.find_all(["h2", "h3", "div", "p"]):
+        if node.name in {"h2", "h3"}:
+            break
+        classes = node.get("class") or []
+        if (
+            "ltx_para" in classes
+            and not node.find_parent(class_="ltx_abstract")
+            and not node.find_parent(class_="ltx_para")
+        ):
+            nodes.append(node)
+    fragment_soup = BeautifulSoup("".join(str(node) for node in nodes), "html.parser")
+    for image in fragment_soup.select("img"):
+        image.decompose()
+    return fragment_soup.get_text(" ", strip=True), str(fragment_soup)
+
+
 def parse_sections(html: str) -> list[tuple[int, str, str, str]]:
     """HTML 문서를 섹션 단위(Abstract, H2, H3)로 파싱하여 수식/표를 보존합니다."""
     soup = BeautifulSoup(html, "html.parser")
@@ -109,6 +131,11 @@ def parse_sections(html: str) -> list[tuple[int, str, str, str]]:
         abstract_html = str(abstract)
         abstract_text = abstract.get_text(" ", strip=True)
         sections.append((1, "Abstract", abstract_text, abstract_html))
+
+    # 1-2. 첫 h2/h3 앞의 본문 (섹션 제목 없이 쓴 Letter·에세이형 논문은 본문 전체가 여기에 있다)
+    body_text, body_html = _body_before_first_heading(root)
+    if len(body_text) >= MIN_BODY_CHARS:
+        sections.append((len(sections) + 1, "본문", body_text, body_html))
 
     # 2. H2, H3 헤딩 기준 본문 분할 (수식 및 표 구조 유지)
     headings = root.select("h2, h3")
