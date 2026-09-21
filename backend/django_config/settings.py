@@ -35,7 +35,8 @@ SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+# 모든 호스트 접속 허용 (배포 및 테스트 단계 권장)
+ALLOWED_HOSTS = ["*"]
 
 
 # Application definition
