@@ -1,0 +1,28 @@
+# 가상환경 및 캐시
+.venv
+venv
+ENV/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 깃 관련 설정
+.git
+.gitignore
+.github
+
+# 보안 및 환경변수
+.env
+*.env
+
+# SQLite 및 로컬 DB 파일
+*.sqlite3
+*.db
+backend/*.sqlite3
+
+# 대용량 이미지/데이터 폴더
+data/figures/
+
+# OS 파일
+.DS_Store
+Thumbs.db
