@@ -1,73 +1,16 @@
-"""CLI entry point for the LangGraph academic-paper assistant."""
+# 샘플 Python 스크립트입니다.
 
-from __future__ import annotations
-
-import argparse
-import sys
-from pathlib import Path
-from uuid import uuid4
-
-from dotenv import load_dotenv
+# Shift+F10을(를) 눌러 실행하거나 내 코드로 바꿉니다.
+# 클래스, 파일, 도구 창, 액션 및 설정을 어디서나 검색하려면 Shift 두 번을(를) 누릅니다.
 
 
-PROJECT_ROOT = Path(__file__).resolve().parent
-SRC_ROOT = PROJECT_ROOT / "src"
-if str(SRC_ROOT) not in sys.path:
-    sys.path.insert(0, str(SRC_ROOT))
-load_dotenv(PROJECT_ROOT / ".env")
-
-from feature.supervisor_chatbot import SupervisorChatbot
+def print_hi(name):
+    # 스크립트를 디버그하려면 하단 코드 줄의 중단점을 사용합니다.
+    print(f'Hi, {name}')  # 중단점을 전환하려면 Ctrl+F8을(를) 누릅니다.
 
 
-EXIT_COMMANDS = {"종료", "exit", "quit", "q"}
+# 스크립트를 실행하려면 여백의 녹색 버튼을 누릅니다.
+if __name__ == '__main__':
+    print_hi('PyCharm')
 
-
-def run(chatbot: SupervisorChatbot, query: str, *, thread_id: str, paper_ids: list[str] | None = None) -> dict:
-    return chatbot.invoke(
-        query,
-        thread_id=thread_id,
-        paper_ids=paper_ids,
-    )
-
-
-def _print_result(result: dict) -> None:
-    print(result["response"])
-    if result.get("sources"):
-        print("\n출처:")
-        for source in result["sources"]:
-            print(f"- [{source['label']}] {source.get('title') or source.get('paper_id')}")
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser(description="Academic Paper LangGraph chatbot")
-    parser.add_argument("query", nargs="?", help="사용자 요청")
-    parser.add_argument("--paper-id", action="append", default=[])
-    parser.add_argument("--thread-id", default=f"cli-{uuid4().hex[:8]}")
-    args = parser.parse_args()
-
-    chatbot = SupervisorChatbot()
-    exit_code = 0
-
-    if args.query:
-        result = run(chatbot, args.query, thread_id=args.thread_id, paper_ids=args.paper_id)
-        _print_result(result)
-        exit_code = 1 if result.get("errors") else 0
-
-    # 한 번의 요청으로 종료하지 않고, 같은 thread_id로 대화를 이어가며
-    # 사용자가 명시적으로 종료를 요청할 때까지 에이전트들이 계속 협업한다.
-    while True:
-        query = input("\n요청을 입력하세요 (종료: 'q'): ").strip()
-        if not query:
-            continue
-        if query.casefold() in EXIT_COMMANDS:
-            break
-        result = run(chatbot, query, thread_id=args.thread_id, paper_ids=args.paper_id)
-        _print_result(result)
-        if result.get("errors"):
-            exit_code = 1
-
-    return exit_code
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())
+# https://www.jetbrains.com/help/pycharm/에서 PyCharm 도움말 참조

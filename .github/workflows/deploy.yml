@@ -2,56 +2,45 @@ name: Deploy to EC2 with Docker
 
 on:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
 
 jobs:
-  build-and-deploy:
+  deploy:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
+      - name: Checkout code
+        uses: actions/checkout@v4
 
-    - name: Set up Docker Buildx
-      uses: docker/setup-buildx-action@v3
+      - name: Deploy to EC2 via SSH
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            # 1. 서버 내 프로젝트 디렉토리로 이동 또는 클론
+            if [ -d "~/Paper_Scholar" ]; then
+              cd ~/Paper_Scholar
+              git pull origin main
+            else
+              cd ~
+              git clone https://github.com/${{ github.repository }}.git
+              cd Paper_Scholar
+            fi
 
-    - name: Log in to Docker Hub
-      uses: docker/login-action@v3
-      with:
-        username: ${{ secrets.DOCKERHUB_USERNAME }}
-        password: ${{ secrets.DOCKERHUB_TOKEN }}
+            # 2. 캐시를 완전히 비우고 전체 requirements.txt 기반으로 이미지 강제 빌드
+            docker build --no-cache -t lizcha01/paper-scholar:latest .
 
-    - name: Build and Push Docker Image
-      uses: docker/build-push-action@v5
-      with:
-        context: .
-        push: true
-        tags: ${{ secrets.DOCKERHUB_USERNAME }}/paper-scholar:latest
+            # 3. 기존 컨테이너 안전하게 중지 및 삭제
+            docker stop paper-scholar || true
+            docker rm paper-scholar || true
 
-    - name: Deploy to AWS EC2 via SSH
-      uses: appleboy/ssh-action@v1.0.3
-      with:
-        host: ${{ secrets.EC2_HOST }}
-        username: ubuntu
-        key: ${{ secrets.EC2_SSH_KEY }}
-        script: |
-          # Docker Hub 로그인
-          echo "${{ secrets.DOCKERHUB_TOKEN }}" | docker login -u "${{ secrets.DOCKERHUB_USERNAME }}" --password-stdin
-
-          # 배포 전 디스크 부족 방지 정리
-          docker system prune -af || true
-
-          # 최신 이미지 다운로드
-          docker pull ${{ secrets.DOCKERHUB_USERNAME }}/paper-scholar:latest
-
-          # 기존 컨테이너 중지 및 제거
-          docker stop paper-scholar || true
-          docker rm paper-scholar || true
-
-          # DJANGO_SECRET_KEY 환경변수를 주입하여 새 컨테이너 실행
-          docker run -d \
-            --name paper-scholar \
-            -p 8000:8000 \
-            -e DJANGO_SECRET_KEY='${{ secrets.DJANGO_SECRET_KEY }}' \
-            --restart always \
-            ${{ secrets.DOCKERHUB_USERNAME }}/paper-scholar:latest
+            # 4. DJANGO_SECRET_KEY 환경 변수를 주입하여 백그라운드 구동
+            docker run -d \
+              --name paper-scholar \
+              -p 8000:8000 \
+              --restart always \
+              -e DJANGO_SECRET_KEY="${{ secrets.DJANGO_SECRET_KEY }}" \
+              lizcha01/paper-scholar:latest
