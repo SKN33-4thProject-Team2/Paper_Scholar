@@ -21,25 +21,17 @@ jobs:
             cd /home/ubuntu/Paper_Scholar
             git pull origin main
             
-            # 1. 환경변수 파일 생성
-            cat << EOF > .env
-            DB_HOST=${{ secrets.DB_HOST }}
-            DB_NAME=${{ secrets.DB_NAME }}
-            DB_USER=${{ secrets.DB_USER }}
-            DB_PASSWORD=${{ secrets.DB_PASSWORD }}
-            DB_PORT=${{ secrets.DB_PORT }}
-            DJANGO_SECRET_KEY=${{ secrets.DJANGO_SECRET_KEY }}
-            EOF
+            # 1. 백엔드 의존성 및 가상환경 업데이트 (필요시)
+            cd /home/ubuntu/Paper_Scholar
+            source .venv/bin/activate
+            pip install -r requirements.txt
             
-            # 2. 백엔드(Docker) 재시작
-            docker compose down
-            docker compose up --build -d
-            
-            # 3. 프론트엔드 프로세스 재시작
-            cd frontend
+            # 2. 프론트엔드 의존성 설치
+            cd /home/ubuntu/Paper_Scholar/frontend
             npm install
-            pkill -f "vite"
-            nohup npm run dev -- --host 0.0.0.0 --port 5173 > frontend.log 2>&1 &
             
-            # 4. Nginx 재시작
-            sudo systemctl restart nginx
+            # 3. systemd 서비스 재시작으로 백엔드/프론트엔드 반영
+            sudo systemctl restart paper-backend paper-frontend
+            
+            # 4. Nginx 리로드
+            sudo systemctl reload nginx
