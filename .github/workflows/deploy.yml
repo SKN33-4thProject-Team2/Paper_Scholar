@@ -19,7 +19,6 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          # 타임아웃 제한 시간을 40분으로 확장하여 빌드 중단 방지
           timeout: 40m
           command_timeout: 40m
           script: |
@@ -33,20 +32,25 @@ jobs:
               cd Paper_Scholar
             fi
 
-            # 2. 잔여 빌드 캐시 정리
+            # 2. 캐시 정리
             docker builder prune -f
 
-            # 3. 도커 이미지 빌드
+            # 3. 최신 코드 기반 도커 이미지 빌드
             docker build -t lizcha01/paper-scholar:latest .
 
-            # 4. 기존 컨테이너 교체
+            # 4. 기존 컨테이너 안전 종료 및 삭제
             docker stop paper-scholar || true
             docker rm paper-scholar || true
 
-            # 5. 백그라운드 구동
+            # 5. DB 연결 정보 및 시크릿 키 주입하여 백그라운드 구동
             docker run -d \
               --name paper-scholar \
               -p 8000:8000 \
               --restart always \
               -e DJANGO_SECRET_KEY="${{ secrets.DJANGO_SECRET_KEY }}" \
+              -e DB_NAME="${{ secrets.DB_NAME }}" \
+              -e DB_USER="${{ secrets.DB_USER }}" \
+              -e DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
+              -e DB_HOST="${{ secrets.DB_HOST }}" \
+              -e DB_PORT="${{ secrets.DB_PORT || '3306' }}" \
               lizcha01/paper-scholar:latest
