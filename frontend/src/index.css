@@ -1,30 +1,96 @@
+/*
+ * Paper Scholar design tokens
+ * Light theme is the active theme. A dark palette is kept below under
+ * :root[data-theme="dark"] as an inert extension point: nothing sets that
+ * attribute yet, so there is no dark mode and no toggle.
+ */
 :root {
-  font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-  color: #284359;
-  background: #f5f8fb;
+  color-scheme: light;
+  font-family: Pretendard, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "Apple SD Gothic Neo", "Noto Sans KR", sans-serif;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
-  --ink: #214761;
-  --muted: #738595;
-  --accent: #2f6f9d;
-  --accent-dark: #245a82;
-  --accent-soft: #edf5fb;
-  --accent-line: #d6e5ef;
-  --yellow: #e8bc4c;
-  --yellow-soft: #fff7dd;
-  --success: #3f8d78;
-  --success-soft: #edf7f3;
-  --danger: #a33b2e;
-  --danger-soft: #fff0ed;
-  --neutral-soft: #f0f4f7;
+
+  --bg: #f3f6fb;
   --surface: #ffffff;
-  --surface-soft: #f8fbfd;
-  --border: #dce8ef;
-  --shadow: 0 14px 34px rgba(32, 78, 106, 0.08);
+  --surface-soft: #f7f9fd;
+  --surface-sunken: #eef2f9;
+  --border: #dbe3ef;
+  --border-strong: #c3cfe1;
+
+  --ink: #1b2a44;
+  --muted: #5b6b84;
+  --faint: #8492a8;
+
+  --accent: #2d64d8;
+  --accent-strong: #1f4ba3;
+  --accent-fill: #2350ac;
+  --accent-soft: #e8effc;
+  --accent-line: #c5d5f3;
+  --on-accent: #ffffff;
+  --brand-band: #244e9c;
+
+  --yellow: #d19a12;
+  --yellow-soft: #fdf3d3;
+  --yellow-ink: #7a5a08;
+  --success: #23805f;
+  --success-soft: #e4f4ed;
+  --danger: #b3382c;
+  --danger-soft: #fdeceb;
+  --danger-line: #f1c2bd;
+  --neutral-soft: #eef2f8;
+
+  --shadow: 0 1px 2px rgba(27, 42, 68, 0.04), 0 4px 16px rgba(27, 42, 68, 0.04);
+  --shadow-sheet: 0 -12px 40px rgba(27, 42, 68, 0.22);
+  --scrim: rgba(20, 32, 54, 0.45);
+  --focus: 0 0 0 3px rgba(43, 95, 199, 0.22);
+
+  --radius: 14px;
+  --radius-sm: 10px;
+  color: var(--ink);
+  background: var(--bg);
+}
+
+/* Reserved for a future dark theme (not applied). */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --bg: #161d2c;
+  --surface: #1e2739;
+  --surface-soft: #232d42;
+  --surface-sunken: #1a2233;
+  --border: #2f3b54;
+  --border-strong: #41506e;
+
+  --ink: #e7edf8;
+  --muted: #a3b1c9;
+  --faint: #7f8fab;
+
+  --accent: #7ba6f5;
+  --accent-strong: #a3c1f8;
+  --accent-fill: #3868c8;
+  --accent-soft: #263654;
+  --accent-line: #38507d;
+  --on-accent: #ffffff;
+  --brand-band: #22345a;
+
+  --yellow: #e2b544;
+  --yellow-soft: #3a3320;
+  --yellow-ink: #efd88f;
+  --success: #5fc59f;
+  --success-soft: #1e3a33;
+  --danger: #f08a7e;
+  --danger-soft: #3d2426;
+  --danger-line: #6b3a3d;
+  --neutral-soft: #2a3550;
+
+  --shadow: 0 1px 2px rgba(0, 0, 0, 0.3), 0 8px 24px rgba(0, 0, 0, 0.25);
+  --shadow-sheet: 0 -12px 40px rgba(0, 0, 0, 0.5);
+  --scrim: rgba(6, 10, 18, 0.62);
+  --focus: 0 0 0 3px rgba(123, 166, 245, 0.35);
 }
 
 * { box-sizing: border-box; }
-body { min-width: 320px; min-height: 100vh; margin: 0; background: #f5f8fb; }
-button, input { font: inherit; }
+body { min-width: 320px; min-height: 100vh; margin: 0; font-size: 15px; line-height: 1.6; color: var(--ink); background: var(--bg); }
+button, input, select, textarea { font: inherit; }
 h1, h2, h3, p { margin-top: 0; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
