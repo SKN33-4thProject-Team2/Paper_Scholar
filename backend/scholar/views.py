@@ -1,11 +1,12 @@
-from django.db.models import Count, Exists, OuterRef
+from django.db.models import Count, Exists, OuterRef, QuerySet
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
+from rest_framework import generics, status
 from rest_framework.decorators import api_view, permission_classes
 from rest_framework.generics import CreateAPIView, ListAPIView, RetrieveAPIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.renderers import BrowsableAPIRenderer, JSONRenderer
 from rest_framework.response import Response
-from rest_framework import status
 from rest_framework.views import APIView
 
 from .jobs import (
@@ -20,8 +21,8 @@ from .serializers import (
     PaperDetailSerializer,
     PaperListSerializer,
     PaperQuestionRequestSerializer,
-    PaperSectionSerializer,
     PaperSaveRequestSerializer,
+    PaperSectionSerializer,
     PaperSummarizeRequestSerializer,
     PaperSummarySerializer,
     PaperTranslateRequestSerializer,
@@ -239,25 +240,25 @@ class ProcessingJobDetailAPIView(RetrieveAPIView):
         )
 
 
-def paper_api_queryset(user=None):
-    """목록과 상세 API가 공유하는 집계 포함 Paper QuerySet입니다."""
-    queryset = Paper.objects.all()
-    if user is not None:
-        queryset = queryset.filter(library_entries__user=user)
-    return (
-        queryset.annotate(
-            api_section_count=Count("sections", distinct=True),
-            api_translation_count=Count("translations", distinct=True),
-            api_has_summary=Exists(
-                PaperSummary.objects.filter(paper_id=OuterRef("pk"))
-            ),
+def paper_api_queryset(user):
+    queryset = (
+        Paper.objects.prefetch_related(
+            "sections",
+            "summary_records",
+            "translations",
+            "library_entries",
         )
-        .order_by("-published_at", "-created_at")
+        .order_by("-updated_at")
     )
+    if getattr(user, "is_authenticated", False):
+        queryset = queryset.filter(library_entries__user=user)
+    return queryset
 
 
-class PaperListAPIView(ListAPIView):
+class PaperListAPIView(generics.ListCreateAPIView):
+    permission_classes = [AllowAny]
     serializer_class = PaperListSerializer
+    renderer_classes = [BrowsableAPIRenderer, JSONRenderer]
 
     def get_queryset(self):
         return paper_api_queryset(self.request.user)

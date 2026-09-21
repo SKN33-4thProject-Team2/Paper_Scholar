@@ -1,16 +1,31 @@
-# 샘플 Python 스크립트입니다.
+from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
+from fastapi.middleware.cors import CORSMiddleware
 
-# Shift+F10을(를) 눌러 실행하거나 내 코드로 바꿉니다.
-# 클래스, 파일, 도구 창, 액션 및 설정을 어디서나 검색하려면 Shift 두 번을(를) 누릅니다.
+app = FastAPI(title="Paper Scholar Backend", version="1.0.0")
 
+# CORS 설정 (프론트엔드 통신 허용)
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-def print_hi(name):
-    # 스크립트를 디버그하려면 하단 코드 줄의 중단점을 사용합니다.
-    print(f'Hi, {name}')  # 중단점을 전환하려면 Ctrl+F8을(를) 누릅니다.
+class QueryRequest(BaseModel):
+    question: str
 
+@app.get("/")
+def read_root():
+    return {"message": "Paper Scholar API is running successfully."}
 
-# 스크립트를 실행하려면 여백의 녹색 버튼을 누릅니다.
-if __name__ == '__main__':
-    print_hi('PyCharm')
-
-# https://www.jetbrains.com/help/pycharm/에서 PyCharm 도움말 참조
+@app.post("/api/chat")
+def chat_with_paper(request: QueryRequest):
+    try:
+        # TODO: 여기에 LangChain / RAG 챗봇 로직 연결
+        user_query = request.question
+        response_answer = f"Received your paper query: {user_query}"
+        return {"status": "success", "answer": response_answer}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
