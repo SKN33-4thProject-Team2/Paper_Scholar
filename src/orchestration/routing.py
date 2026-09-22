@@ -321,6 +321,14 @@ class SupervisorRouter:
             term in query for term in ("요약", "summar", "summary")
         )
         wants_save = any(term in query for term in ("저장", "보관"))
+        # 아래 단일 목적 분기들보다 먼저 "새 논문을 찾는 요청"인지 판단해야
+        # "찾아서 요약해줘" 같은 복합 요청이 되묻기로 새지 않는다.
+        wants_new_papers = any(
+            term in query
+            for term in ("arxiv", "외부 검색", "논문 찾아", "찾아서", "찾아줘", "검색해", *download_terms)
+        )
+        wants_qa = any(term in query for term in ("근거", "출처", "질문", "설명해"))
+        wants_deep = any(term in query for term in deep_research_terms)
 
         # 주제가 빠진 관련 논문 저장 요청은 먼저 되묻되, 원래 작업과
         # 저장 개수를 State에 보관해 다음 사용자 입력에서 이어서 실행한다.
@@ -469,7 +477,12 @@ class SupervisorRouter:
                 selected_paper_ids=[active_deep_research_paper_id],
                 deep_search_paper_id=active_deep_research_paper_id,
             )
-        if wants_summarize and not selected_candidate_ids and not state.get("paper_ids"):
+        if (
+            wants_summarize
+            and not selected_candidate_ids
+            and not state.get("paper_ids")
+            and not wants_new_papers
+        ):
             return _human_decision(
                 "요약 대상 논문이 선택되지 않음",
                 "어느 논문을 요약할까요? 논문 제목, paper_id 또는 목록 번호를 알려주세요.",
@@ -557,13 +570,9 @@ class SupervisorRouter:
         # Detect that BEFORE the single-purpose keyword checks below, which
         # would otherwise stop at whichever keyword happens to match first
         # and silently drop the rest of the request.
-        wants_new_papers = any(
-            term in query
-            for term in ("arxiv", "외부 검색", "논문 찾아", "찾아서", "찾아줘", "검색해", *download_terms)
-        )
-        wants_qa = any(term in query for term in ("근거", "출처", "질문", "설명해"))
-        wants_deep = any(term in query for term in deep_research_terms)
-        if wants_new_papers and (wants_translate or wants_summarize or wants_qa or wants_deep):
+        if wants_new_papers and (
+            wants_translate or wants_summarize or wants_qa or wants_deep or wants_save
+        ):
             steps: list[ExecutableRoute] = []
             if any(
                 term in query
@@ -577,7 +586,7 @@ class SupervisorRouter:
                     steps.append("summarize")
                 if wants_translate:
                     steps.append("translate")
-            elif wants_download:
+            elif wants_download or wants_save:
                 steps.append("download")
             if wants_qa or wants_deep:
                 steps.append("deep_search")

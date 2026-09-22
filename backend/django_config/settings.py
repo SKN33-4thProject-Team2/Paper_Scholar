@@ -25,6 +25,12 @@ PROJECT_ROOT = BASE_DIR.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
+# LangGraph Supervisor(src/orchestration)는 내부에서 `from orchestration...`,
+# `from tools...` 형태로 형제 모듈을 부르므로 src/ 자체도 import 루트로 등록한다.
+SRC_ROOT = PROJECT_ROOT / "src"
+if str(SRC_ROOT) not in sys.path:
+    sys.path.insert(0, str(SRC_ROOT))
+
 
 load_dotenv(PROJECT_ROOT / ".env")
 # Quick-start development settings - unsuitable for production

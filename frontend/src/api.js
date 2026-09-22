@@ -194,10 +194,22 @@ export function getProcessingJob(jobId) {
   return request(`/jobs/${encodeURIComponent(jobId)}/`)
 }
 
-export function createSupervisorPlan(message) {
+export function createSupervisorPlan(query) {
   return request('/supervisor/plan/', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ message }),
+    body: JSON.stringify({ query }),
   })
+}
+
+export function startSupervisorRun(query, threadId) {
+  return request('/supervisor/run/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ query, thread_id: threadId || '' }),
+  })
+}
+
+export function getSupervisorRun(runId) {
+  return request(`/supervisor/run/${encodeURIComponent(runId)}/`)
 }
