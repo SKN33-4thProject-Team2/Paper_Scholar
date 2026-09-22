@@ -105,6 +105,28 @@ def _default_deep_research_answerer():
     return LangChainPaperAnswerer.with_openai()
 
 
+# 요청 문장에서 동작 표현을 걷어내고 주제어만 남긴다. 키워드 생성 모델을
+# 쓸 수 없을 때(자격 증명 누락, 호출 실패 등)도 검색을 이어가기 위한 대비책이다.
+_ACTION_WORDS = {
+    "찾아줘", "찾아서", "찾아", "검색해줘", "검색해", "검색", "요약", "요약해줘",
+    "요약하고", "번역", "번역해줘", "번역하고", "저장", "저장해줘", "논문", "해줘",
+    "관련", "알려줘", "설명해줘", "설명해", "보여줘", "정리해줘", "그리고",
+}
+
+
+def _fallback_keywords(query: str) -> list[str]:
+    cleaned = re.sub(r"[^0-9A-Za-z가-힣\s]", " ", query)
+    tokens = [
+        token
+        for token in cleaned.split()
+        if token not in _ACTION_WORDS
+        and token.casefold() not in _GENERIC_KEYWORD_BLOCKLIST
+        and not re.fullmatch(r"\d+(편|개)?", token)
+    ]
+    topic = " ".join(tokens).strip()
+    return [topic] if topic else []
+
+
 class KeywordNode:
     def __init__(self, factory: Callable[[], Any] = _default_keyword_tool) -> None:
         self._factory = factory
@@ -128,8 +150,16 @@ class KeywordNode:
                 "이전 검색 결과가 없었습니다. 같은 의미를 유지하되 "
                 f"다음 표현과 겹치지 않는 대체 학술 용어를 생성하세요: {previous}"
             )
-        result = self.tool.generate_keywords(topic)
-        keywords = [str(item) for item in result.get("keywords", []) if str(item).strip()]
+        try:
+            result = self.tool.generate_keywords(topic)
+            keywords = [
+                str(item) for item in result.get("keywords", []) if str(item).strip()
+            ]
+        except Exception:
+            # 모델을 쓸 수 없어도 검색 자체는 막지 않는다.
+            keywords = []
+        if not keywords:
+            keywords = _fallback_keywords(state["query"])
         if not keywords:
             raise NodeExecutionError("검색 키워드를 생성하지 못했습니다.")
         return {"keywords": keywords, "node_history": ["keyword"]}
