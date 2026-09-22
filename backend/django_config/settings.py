@@ -181,12 +181,14 @@ REST_FRAMEWORK = {
         'rest_framework.renderers.JSONRenderer',
     ],
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        'rest_framework.authentication.SessionAuthentication',      # 브라우저 UI 세션 로그인용 추가
+        # 인증되지 않은 API 요청은 401을 반환하되, browsable API의 세션 로그인과
+        # Basic 인증도 계속 지원한다.
+        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'rest_framework.authentication.SessionAuthentication',
         'rest_framework.authentication.BasicAuthentication',
-        'rest_framework_simplejwt.authentication.JWTAuthentication',# 기존 API용 유지
     ],
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.AllowAny',                      # 비로그인 브라우저 화면 조회 허용으로 변경
+        'rest_framework.permissions.IsAuthenticated',
     ],
     # 프론트가 {count, results} 모양을 기대한다. 이 설정이 빠지면 목록이
     # 맨 배열로 나가고, 화면에서 results 를 읽다가 터진다.

@@ -1,11 +1,7 @@
 from django.urls import path, register_converter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from .supervisor_views import (
-    SupervisorPlanAPIView,
-    SupervisorRunAPIView,
-    SupervisorRunDetailAPIView,
-)
+from .supervisor_views import SupervisorPlanAPIView
 from .views import (
     ArxivSearchAPIView,
     CurrentUserAPIView,
@@ -52,20 +48,6 @@ urlpatterns = [
     # DeepSearch 플랜
     path("supervisor/plan", SupervisorPlanAPIView.as_view(), name="supervisor-plan-noslash"),
     path("supervisor/plan/", SupervisorPlanAPIView.as_view(), name="supervisor-plan"),
-
-    # Supervisor 그래프 비동기 실행 및 상태 폴링
-    path("supervisor/run", SupervisorRunAPIView.as_view(), name="supervisor-run-noslash"),
-    path("supervisor/run/", SupervisorRunAPIView.as_view(), name="supervisor-run"),
-    path(
-        "supervisor/run/<int:pk>",
-        SupervisorRunDetailAPIView.as_view(),
-        name="supervisor-run-detail-noslash",
-    ),
-    path(
-        "supervisor/run/<int:pk>/",
-        SupervisorRunDetailAPIView.as_view(),
-        name="supervisor-run-detail",
-    ),
 
     # 사용자 인증
     path("auth/register", RegisterAPIView.as_view(), name="auth-register-noslash"),
