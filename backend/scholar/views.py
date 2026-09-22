@@ -34,7 +34,7 @@ def paper_api_queryset(user=None):
                 PaperSummary.objects.filter(paper_id=OuterRef("pk"))
             ),
         )
-        .order_by("-published_at", "-created_at")
+        .order_by("-updated_at")
     )
     if user is not None and getattr(user, "is_authenticated", False):
         queryset = queryset.filter(library_entries__user=user)

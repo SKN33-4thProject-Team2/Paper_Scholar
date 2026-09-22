@@ -41,7 +41,21 @@ SECRET_KEY = os.environ.get(
 DEBUG = os.environ.get("DEBUG", "True") == "True"
 
 # 모든 호스트 접속 허용 (배포 및 테스트 단계 권장)
-ALLOWED_HOSTS = ["*"]
+ALLOWED_HOSTS = [
+    '52.79.195.18',
+    'localhost',
+    '127.0.0.1',
+    'skn33.iptime.org',
+    '.skn33-project.store',
+    'skn33-project.store',
+    '*',
+]
+
+CSRF_TRUSTED_ORIGINS = [
+    'http://skn33-project.store:8000',
+    'http://*.skn33-project.store:8000',
+    'http://52.79.195.18:8000',
+]
 
 
 # Application definition
@@ -55,7 +69,6 @@ INSTALLED_APPS = [
     "django.contrib.staticfiles",
     "corsheaders",
     "rest_framework",
-
     "scholar.apps.ScholarConfig",
 ]
 
@@ -142,22 +155,28 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.2/howto/static-files/
 
-STATIC_URL = 'static/'
+STATIC_URL = '/static/'
+STATIC_ROOT = BASE_DIR / 'staticfiles'
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.2/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 
+# [핵심 수정] BrowsableAPIRenderer를 1순위로 명시하여 브라우저 대화형 UI 강제 출력
 REST_FRAMEWORK = {
-    "DEFAULT_AUTHENTICATION_CLASSES": (
-        "rest_framework_simplejwt.authentication.JWTAuthentication",
-    ),
-    "DEFAULT_PERMISSION_CLASSES": (
-        "rest_framework.permissions.IsAuthenticated",
-    ),
-    "DEFAULT_PAGINATION_CLASS": "rest_framework.pagination.PageNumberPagination",
-    "PAGE_SIZE": 20,
+    'DEFAULT_RENDERER_CLASSES': [
+        'rest_framework.renderers.BrowsableAPIRenderer',
+        'rest_framework.renderers.JSONRenderer',
+    ],
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'rest_framework.authentication.SessionAuthentication',      # 브라우저 UI 세션 로그인용 추가
+        'rest_framework.authentication.BasicAuthentication',
+        'rest_framework_simplejwt.authentication.JWTAuthentication',# 기존 API용 유지
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.AllowAny',                      # 비로그인 브라우저 화면 조회 허용으로 변경
+    ],
 }
 
 SIMPLE_JWT = {

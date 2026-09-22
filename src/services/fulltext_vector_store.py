@@ -38,6 +38,8 @@ SECTION_COLUMNS = (
 EXCLUDED_SECTIONS = {"references", "bibliography"}
 # 표 한 개가 이보다 길면 행 단위로 분할
 TABLE_CHUNK_LIMIT = 4000
+# 이보다 작은 표는 대개 수식 한 줄이라, 따로 떼지 않고 설명 문단과 함께 둔다
+MIN_TABLE_CHARS = 400
 
 
 class FullTextStoreError(RuntimeError):
@@ -45,18 +47,33 @@ class FullTextStoreError(RuntimeError):
 
 
 def split_text(text: str, *, chunk_size: int = 1200, overlap: int = 180) -> list[str]:
-    """문단을 우선 보존하며 겹치는 검색용 청크로 나눈다."""
+    """문단 경계를 지키되, 짧은 문단은 chunk_size 안에서 이어 붙인다."""
     if chunk_size < 200 or not 0 <= overlap < chunk_size:
         raise ValueError("chunk_size와 overlap 값이 올바르지 않습니다.")
     chunks: list[str] = []
+    buffer = ""
+
+    def flush() -> None:
+        nonlocal buffer
+        if buffer.strip():
+            chunks.append(buffer.strip())
+        buffer = ""
+
     for paragraph in (part.strip() for part in text.split("\n\n") if part.strip()):
-        start = 0
-        while start < len(paragraph):
-            end = min(start + chunk_size, len(paragraph))
-            chunks.append(paragraph[start:end])
-            if end == len(paragraph):
-                break
-            start = end - overlap
+        if len(paragraph) > chunk_size:          # 긴 문단은 지금처럼 겹쳐 가며 자른다
+            flush()
+            start = 0
+            while start < len(paragraph):
+                end = min(start + chunk_size, len(paragraph))
+                chunks.append(paragraph[start:end])
+                if end == len(paragraph):
+                    break
+                start = end - overlap
+            continue
+        if buffer and len(buffer) + len(paragraph) + 2 > chunk_size:
+            flush()
+        buffer = f"{buffer}\n\n{paragraph}" if buffer else paragraph
+    flush()
     return chunks
 
 
@@ -122,16 +139,25 @@ def restore_markup(html: str) -> str:
 
 
 def split_section(text: str) -> list[str]:
-    """표는 블록 단위로 온전히 보존하고, 일반 텍스트는 문단 단위로 청킹한다."""
+    """큰 표는 블록 단위로 보존하고, 작은 표(수식 줄)는 설명 문단과 함께 청킹한다."""
     blocks = re.split(r"(\n\|(?:[^\n]*\|)+(?:\n\|(?:[^\n]*\|)+)*)", "\n" + text)
     chunks: list[str] = []
+    pending: list[str] = []
+
+    def flush_pending() -> None:
+        if pending:
+            chunks.extend(split_text("\n\n".join(pending)))
+            pending.clear()
+
     for block in blocks:
         stripped = block.strip()
         if not stripped:
             continue
-        if not stripped.startswith("|"):
-            chunks.extend(split_text(stripped))
+        # 일반 문단과 수식 한 줄짜리 표는 모아서 함께 자른다
+        if not stripped.startswith("|") or len(stripped) <= MIN_TABLE_CHARS:
+            pending.append(stripped)
             continue
+        flush_pending()
         if len(stripped) <= TABLE_CHUNK_LIMIT:
             chunks.append(stripped)
             continue
@@ -145,6 +171,7 @@ def split_section(text: str) -> list[str]:
             current.append(line)
         if len(current) > 2:
             chunks.append("\n".join(current))
+    flush_pending()
     return chunks
 
 

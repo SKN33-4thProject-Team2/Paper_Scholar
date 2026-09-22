@@ -14,8 +14,6 @@ jobs:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
-          timeout: 40m
-          command_timeout: 40m
           script: |
             cd /home/ubuntu/Paper_Scholar
 
