@@ -41,6 +41,10 @@ RUN pip install --no-cache-dir --prefer-binary -r requirements.txt
 # 8. 소스 코드 전체 복사 (.dockerignore 적용)
 COPY . .
 
+# 비동기 요약·번역 worker가 사용하는 공통 로거가 이미지에 포함됐는지
+# 배포 전에 검증한다. ``log/``가 실수로 ignore되면 빌드 단계에서 실패한다.
+RUN python -c "from log import AppLogger, LogCode"
+
 # 9. manage.py가 위치한 backend 디렉토리로 작업 경로 이동
 WORKDIR /app/backend
 
