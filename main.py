@@ -7,7 +7,6 @@ from typing import Any, Dict, List, Optional
 from fastapi import FastAPI, HTTPException, Request, status
 from pydantic import BaseModel
 
-# FastAPI 앱 인스턴스 초기화
 app = FastAPI(title="Paper Scholar LLM Serving")
 
 
@@ -19,7 +18,7 @@ class SearchRequest(BaseModel):
     max_results: Optional[int] = 10
 
 
-# --- LLM 추론 요청 데이터 모델 (백엔드 연동 규격) ---
+# --- LLM 추론 요청 데이터 모델 ---
 class GenerateRequest(BaseModel):
     prompt: str
     max_tokens: Optional[int] = 1024
@@ -34,12 +33,10 @@ async def search_arxiv(request: Request):
     except Exception:
         payload = {}
 
-    # 프론트엔드 파라미터 매핑 (검색어 필드명 유연성 확보)
     search_query = payload.get("query") or payload.get("keyword") or payload.get("q") or ""
     max_results = payload.get("max_results") or payload.get("limit") or 10
     sort_by_input = payload.get("sort_by") or "relevance"
 
-    # arXiv 정렬 기준 변환
     sort_map = {
         "relevance": "relevance",
         "관련도순": "relevance",
@@ -49,10 +46,9 @@ async def search_arxiv(request: Request):
     arxiv_sort_by = sort_map.get(sort_by_input, "relevance")
 
     if not search_query.strip():
-        return {"papers": [], "results": [], "total": 0}
+        return {"status": "success", "papers": [], "results": [], "total": 0}
 
-    # arXiv API 호출 및 XML 파싱
-    encoded_query = urllib.parse.quote(search_query)
+    encoded_query = urllib.parse.quote(search_query.strip())
     api_url = (
         f"http://export.arxiv.org/api/query?search_query=all:{encoded_query}"
         f"&start=0&max_results={max_results}&sortBy={arxiv_sort_by}&sortOrder=descending"
@@ -103,7 +99,6 @@ async def search_arxiv(request: Request):
             }
             results.append(paper_item)
 
-        # 프론트엔드 데이터 규격에 맞게 papers와 results 두 키를 모두 반환
         return {
             "status": "success",
             "papers": results,
@@ -117,19 +112,11 @@ async def search_arxiv(request: Request):
         )
 
 
-# --- [2] RunPod LLM 모델 추론 엔드포인트 (요약 / 번역 / 질의응답) ---
+# --- [2] RunPod LLM 모델 추론 엔드포인트 ---
 @app.post("/generate")
 @app.post("/generate/")
 async def generate_text(request: GenerateRequest):
-    """
-    Django 백엔드의 요약, 번역, 질의응답 요청을 수신하여 텍스트를 반환하는 엔드포인트
-    """
     try:
-        # 실제 모델 파이프라인 호출 구문 (src 모듈이 있을 경우 연결)
-        # 예: from src.services.llm_service import generate_response
-        # response_text = generate_response(request.prompt, request.max_tokens)
-
-        # 기본 응답 포맷
         response_text = f"[RunPod LLM Response] Processed prompt: {request.prompt[:100]}..."
         return {"text": response_text, "status": "success"}
     except Exception as e:
@@ -139,9 +126,6 @@ async def generate_text(request: GenerateRequest):
         )
 
 
-# --- [3] Uvicorn 서버 실행 블록 ---
 if __name__ == "__main__":
     import uvicorn
-
-    # 외부 터널 및 컨테이너 바인딩을 위해 0.0.0.0:8000으로 구동
     uvicorn.run(app, host="0.0.0.0", port=8000)
