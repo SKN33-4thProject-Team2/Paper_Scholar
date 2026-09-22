@@ -1,37 +1,47 @@
-name: Deploy to AWS EC2
+name: Deploy to EC2
 
 on:
   push:
-    branches: [ main ]
+    branches: [ "main" ]
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout source code
-        uses: actions/checkout@v3
-
-      - name: Deploy to EC2 via SSH
-        uses: appleboy/ssh-action@master
+      - name: SSH to EC2 and Deploy
+        uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
           script: |
             cd /home/ubuntu/Paper_Scholar
-            git pull origin main
-            
-            # 1. 백엔드 의존성 및 가상환경 업데이트 (필요시)
-            cd /home/ubuntu/Paper_Scholar
-            source .venv/bin/activate
-            pip install -r requirements.txt
-            
-            # 2. 프론트엔드 의존성 설치
-            cd /home/ubuntu/Paper_Scholar/frontend
-            npm install
-            
-            # 3. systemd 서비스 재시작으로 백엔드/프론트엔드 반영
-            sudo systemctl restart paper-backend paper-frontend
-            
-            # 4. Nginx 리로드
-            sudo systemctl reload nginx
+
+            # 1. 소스코드 최신화
+            git fetch --all
+            git reset --hard origin/main
+
+            # 2. 캐시 정리
+            docker builder prune -f
+
+            # 3. 최신 코드 기반 도커 이미지 빌드
+            docker build -t lizcha01/paper-scholar:latest .
+
+            # 4. 기존 컨테이너 안전 종료 및 삭제
+            docker stop paper-scholar || true
+            docker rm paper-scholar || true
+
+            # 5. DB 연결 정보 및 DNS 옵션 주입하여 구동
+            docker run -d \
+              --name paper-scholar \
+              -p 8000:8000 \
+              --dns 8.8.8.8 \
+              --dns 8.8.4.4 \
+              --restart always \
+              -e DJANGO_SECRET_KEY="${{ secrets.DJANGO_SECRET_KEY }}" \
+              -e DB_NAME="${{ secrets.DB_NAME }}" \
+              -e DB_USER="${{ secrets.DB_USER }}" \
+              -e DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
+              -e DB_HOST="${{ secrets.DB_HOST }}" \
+              -e DB_PORT="${{ secrets.DB_PORT || '3306' }}" \
+              lizcha01/paper-scholar:latest

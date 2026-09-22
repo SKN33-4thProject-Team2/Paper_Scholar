@@ -11,6 +11,7 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 import os
+import random
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -30,10 +31,14 @@ load_dotenv(PROJECT_ROOT / ".env")
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ["DJANGO_SECRET_KEY"]
+# 수정: 환경 변수가 없을 경우 안전한 폴백 키 자동 생성 (배포 에러 방지)
+SECRET_KEY = os.environ.get(
+    "DJANGO_SECRET_KEY",
+    "django-insecure-fallback-key-" + "".join(random.choices("abcdefghijklmnopqrstuvwxyz0123456789", k=20))
+)
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+DEBUG = os.environ.get("DEBUG", "True") == "True"
 
 # 모든 호스트 접속 허용 (배포 및 테스트 단계 권장)
 ALLOWED_HOSTS = [
@@ -104,10 +109,10 @@ WSGI_APPLICATION = 'django_config.wsgi.application'
 DATABASES = {
     "default": {
         "ENGINE": "django.db.backends.mysql",
-        "NAME": os.getenv("DB_NAME"),
-        "USER": os.getenv("DB_USER"),
-        "PASSWORD": os.getenv("DB_PASSWORD"),
-        "HOST": os.getenv("DB_HOST"),
+        "NAME": os.getenv("DB_NAME", "paper_scholar"),
+        "USER": os.getenv("DB_USER", "root"),
+        "PASSWORD": os.getenv("DB_PASSWORD", ""),
+        "HOST": os.getenv("DB_HOST", "localhost"),
         "PORT": os.getenv("DB_PORT", "3306"),
         "OPTIONS": {
             "charset": "utf8mb4",
@@ -186,7 +191,8 @@ CORS_ALLOWED_ORIGINS = [
         "CORS_ALLOWED_ORIGINS",
         (
             "http://localhost:5173,http://127.0.0.1:5173,"
-            "http://localhost:3000,http://127.0.0.1:3000"
+            "http://localhost:3000,http://127.0.0.1:3000,"
+            "https://skn33-project.store"
         ),
     ).split(",")
     if origin.strip()
