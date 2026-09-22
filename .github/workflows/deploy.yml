@@ -1,4 +1,4 @@
-name: Deploy to EC2
+name: Deploy Backend to EC2
 
 on:
   push:
@@ -8,31 +8,31 @@ jobs:
   deploy:
     runs-on: ubuntu-latest
     steps:
-      - name: SSH to EC2 and Deploy
+      - name: Deploy to EC2 via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          # 타임아웃 에러 방지를 위해 60분으로 확장
+          timeout: 60m
+          command_timeout: 60m
           script: |
             cd /home/ubuntu/Paper_Scholar
 
-            # 1. 소스코드 최신화
+            # 1. 원격 최신 소스 강제 동기화
             git fetch --all
             git reset --hard origin/main
 
-            # 2. 캐시 정리
-            docker builder prune -f
+            # 2. 기존 실행 중인 백엔드 컨테이너 중지 및 제거
+            sudo docker stop paper-scholar || true
+            sudo docker rm paper-scholar || true
 
-            # 3. 최신 코드 기반 도커 이미지 빌드
-            docker build -t lizcha01/paper-scholar:latest .
+            # 3. 도커 이미지 빌드 (타임아웃 방지 및 레이어 캐시 최대한 활용)
+            sudo docker build -t lizcha01/paper-scholar:latest .
 
-            # 4. 기존 컨테이너 안전 종료 및 삭제
-            docker stop paper-scholar || true
-            docker rm paper-scholar || true
-
-            # 5. DB 연결 정보 및 DNS 옵션 주입하여 구동
-            docker run -d \
+            # 4. 백엔드 컨테이너 실행 (DNS 설정 및 RunPod 고정 터널 주소 주입)
+            sudo docker run -d \
               --name paper-scholar \
               -p 8000:8000 \
               --dns 8.8.8.8 \
@@ -43,5 +43,13 @@ jobs:
               -e DB_USER="${{ secrets.DB_USER }}" \
               -e DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
               -e DB_HOST="${{ secrets.DB_HOST }}" \
-              -e DB_PORT="${{ secrets.DB_PORT || '3306' }}" \
+              -e DB_PORT="${{ secrets.DB_PORT || '33062' }}" \
+              -e RUNPOD_API_URL="https://llm.skn33-project.store" \
               lizcha01/paper-scholar:latest
+
+            # 5. DB 마이그레이션 자동 실행 (테이블 미생성으로 인한 502 에러 방지)
+            sleep 5
+            sudo docker exec paper-scholar python manage.py migrate --noinput || true
+
+            # 6. 이전 댕글링 이미지만 안전하게 정리
+            sudo docker image prune -f
