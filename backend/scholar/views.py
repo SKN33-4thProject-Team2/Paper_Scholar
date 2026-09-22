@@ -447,6 +447,9 @@ class PaperSectionsAPIView(generics.ListAPIView):
     """
     serializer_class = PaperSectionSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    # 프론트는 이 응답을 배열 그대로 받아 map() 을 돌린다.
+    # 전역 페이지네이션이 {count, results} 로 감싸면 화면이 터지므로 여기서만 끈다.
+    pagination_class = None
 
     def get_queryset(self):
         arxiv_id = self.kwargs.get("arxiv_id")
@@ -511,6 +514,9 @@ class PaperTranslationsAPIView(generics.ListAPIView):
     """
     serializer_class = TranslationSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    # 프론트는 이 응답을 배열 그대로 받아 map() 을 돌린다.
+    # 전역 페이지네이션이 {count, results} 로 감싸면 화면이 터지므로 여기서만 끈다.
+    pagination_class = None
 
     def get_queryset(self):
         arxiv_id = self.kwargs.get("arxiv_id")
