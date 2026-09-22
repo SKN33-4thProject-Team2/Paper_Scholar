@@ -26,25 +26,26 @@ ENV PATH="${JAVA_HOME}/bin:${PATH}"
 # 4. 컨테이너 내부 작업 디렉토리 설정
 WORKDIR /app
 
-# 5. pip 최신화 및 의존성 패키지 단계별 설치
-COPY requirements.txt .
-# pip, setuptools, wheel 최신화
+# 5. pip 기본 도구 최신화
 RUN pip install --no-cache-dir --upgrade pip setuptools wheel
 
-# CPU 전용 PyTorch 사전 설치 (수 GB에 달하는 CUDA 드라이버 유입 및 디스크 부족 방지)
-RUN pip install --no-cache-dir torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu
+# 6. CPU 전용 PyTorch 사전 설치 (requirements.txt보다 먼저 설치하여 캐시 고정)
+RUN pip install --no-cache-dir \
+    torch torchvision torchaudio \
+    --index-url https://download.pytorch.org/whl/cpu
 
-# 나머지 모든 프로젝트 의존성 설치
+# 7. 프로젝트 의존성 파일 복사 및 설치 (requirements가 바뀌어도 위 PyTorch 캐시는 유지)
+COPY requirements.txt .
 RUN pip install --no-cache-dir --prefer-binary -r requirements.txt
 
-# 6. 소스 코드 전체 복사 (.dockerignore 적용)
+# 8. 소스 코드 전체 복사 (.dockerignore 적용)
 COPY . .
 
-# 7. manage.py가 위치한 backend 디렉토리로 작업 경로 이동
+# 9. manage.py가 위치한 backend 디렉토리로 작업 경로 이동
 WORKDIR /app/backend
 
-# 8. 컨테이너 개방 포트 명시
+# 10. 컨테이너 개방 포트 명시
 EXPOSE 8000
 
-# 9. Django 웹 서버 실행 (0.0.0.0 바인딩)
+# 11. Django 웹 서버 실행 (0.0.0.0 바인딩)
 CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
