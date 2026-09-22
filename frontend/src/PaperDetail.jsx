@@ -69,32 +69,65 @@ function OverviewTab({ paper }) {
   )
 }
 
-function SectionsTab({ sections, job, onGenerate }) {
+function isHtmlUnavailableError(message = '') {
+  return (
+    message.includes('arXiv HTML을 찾을 수 없습니다 (404 Not Found)')
+    || message.includes('HTML 렌더링이 제공되지')
+  )
+}
+
+function SectionsTab({ paper, sections, job, onGenerate }) {
   const sectionList = Array.isArray(sections) ? sections : []
   const isRunning = job?.status === 'pending' || job?.status === 'running'
+  const htmlUnavailable = (
+    job?.status === 'failed' && isHtmlUnavailableError(job.error_message)
+  )
+  const pdfUrl = paper.pdf_url || `https://arxiv.org/pdf/${paper.arxiv_id}`
   if (sectionList.length === 0) {
     return (
       <div className="sections-tab">
         <div className="artifact-actions">
           <div>
             <strong>
-              {isRunning
+              {htmlUnavailable
+                ? 'HTML 본문 미지원'
+                : isRunning
                 ? '본문 추출 중'
                 : job?.status === 'failed'
                   ? '본문 추출 실패'
                   : '본문 추출 필요'}
             </strong>
-            <span>
-              {job?.status === 'failed'
-                ? job.error_message
-                : '논문 원문에서 본문 섹션을 추출합니다.'}
-            </span>
+            {htmlUnavailable ? (
+              <>
+                <span>이 논문은 arXiv HTML 본문을 제공하지 않아 자동 추출이 어렵습니다.</span>
+                <span>PDF 원문을 직접 확인해 주세요.</span>
+              </>
+            ) : (
+              <span>
+                {job?.status === 'failed'
+                  ? job.error_message
+                  : '논문 원문에서 본문 섹션을 추출합니다.'}
+              </span>
+            )}
           </div>
-          <button type="button" disabled={isRunning} onClick={onGenerate}>
-            {isRunning ? '추출 중…' : job?.status === 'failed' ? '다시 시도' : '본문 추출'}
-          </button>
+          {htmlUnavailable ? (
+            <a
+              className="artifact-action-link"
+              href={pdfUrl}
+              target="_blank"
+              rel="noreferrer"
+            >
+              PDF 원문 보기
+            </a>
+          ) : (
+            <button type="button" disabled={isRunning} onClick={onGenerate}>
+              {isRunning ? '추출 중…' : job?.status === 'failed' ? '다시 시도' : '본문 추출'}
+            </button>
+          )}
         </div>
-        <div className="artifact-empty">아직 추출된 본문 섹션이 없습니다.</div>
+        {!htmlUnavailable && (
+          <div className="artifact-empty">아직 추출된 본문 섹션이 없습니다.</div>
+        )}
       </div>
     )
   }
@@ -234,8 +267,11 @@ export default function PaperDetail({ paper, loading, onPaperUpdated }) {
   const paperArtifacts = artifacts.paperId === paper?.arxiv_id
     ? artifacts
     : EMPTY_ARTIFACTS
-  const extractionJobId = extractionJob?.id
-  const extractionJobStatus = extractionJob?.status
+  const currentExtractionJob = extractionJob?.arxiv_id === paper?.arxiv_id
+    ? extractionJob
+    : paper?.latest_extraction_job || null
+  const extractionJobId = currentExtractionJob?.id
+  const extractionJobStatus = currentExtractionJob?.status
   const summaryJobId = summaryJob?.id
   const summaryJobStatus = summaryJob?.status
   const translationJobId = translationJob?.id
@@ -499,8 +535,9 @@ export default function PaperDetail({ paper, loading, onPaperUpdated }) {
         )}
         {!artifactLoading && !artifactError && activeTab === 'sections' && (
           <SectionsTab
+            paper={paper}
             sections={paperArtifacts.sections || []}
-            job={extractionJob}
+            job={currentExtractionJob}
             onGenerate={generateExtraction}
           />
         )}

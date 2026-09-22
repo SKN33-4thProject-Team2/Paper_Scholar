@@ -293,6 +293,32 @@ class PaperAPITest(AuthenticatedAPITestCase):
         self.assertEqual(response.data["arxiv_id"], "1702.01806")
         self.assertEqual(response.data["entry_url"], self.paper.entry_url)
 
+    def test_detail_includes_current_users_latest_extraction_failure(self):
+        ProcessingJob.objects.create(
+            user=self.user,
+            paper=self.empty_paper,
+            job_type=ProcessingJob.JobType.EXTRACT,
+            status=ProcessingJob.Status.FAILED,
+            error_message=(
+                "arXiv HTML을 찾을 수 없습니다 (404 Not Found): 1303.1390. "
+                "해당 논문은 HTML 렌더링이 제공되지 않는 구형 논문일 수 있습니다."
+            ),
+        )
+
+        response = self.client.get(
+            reverse(
+                "scholar:paper-detail",
+                kwargs={"arxiv_id": self.empty_paper.arxiv_id},
+            )
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["latest_extraction_job"]["status"], "failed")
+        self.assertIn(
+            "404 Not Found",
+            response.data["latest_extraction_job"]["error_message"],
+        )
+
     def test_detail_accepts_legacy_arxiv_id_with_slash(self):
         response = self.client.get(
             reverse(
