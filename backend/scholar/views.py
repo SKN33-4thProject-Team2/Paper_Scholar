@@ -55,7 +55,7 @@ def save_papers_and_create_jobs(
 
     legacy_papers = [
         {
-            "id": paper["arxiv_id"],
+            "id": normalize_arxiv_id(paper["arxiv_id"]),
             "title": paper["title"],
             "authors": ", ".join(paper["authors"]),
             "summary": paper["abstract"],
@@ -293,7 +293,12 @@ class ArxivSearchAPIView(APIView):
             for entry in root.findall("atom:entry", ns):
                 raw_id_elem = entry.find("atom:id", ns)
                 raw_id = raw_id_elem.text.strip() if raw_id_elem is not None else ""
-                arxiv_id = raw_id.split("/abs/")[-1] if "/abs/" in raw_id else raw_id
+                versioned_arxiv_id = (
+                    raw_id.split("/abs/")[-1]
+                    if "/abs/" in raw_id
+                    else raw_id
+                )
+                arxiv_id = re.sub(r"v\d+$", "", versioned_arxiv_id)
 
                 title_elem = entry.find("atom:title", ns)
                 title = " ".join(title_elem.text.split()) if title_elem is not None else "No Title"

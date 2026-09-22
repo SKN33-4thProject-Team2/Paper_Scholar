@@ -23,6 +23,7 @@ class ExtractorMySQLSyncTest(unittest.TestCase):
         with sqlite3.connect(self.library_db) as connection:
             connection.execute("CREATE TABLE papers (id TEXT PRIMARY KEY)")
             connection.execute("INSERT INTO papers VALUES (?)", ("paper-1",))
+            connection.execute("INSERT INTO papers VALUES (?)", ("paper-2v3",))
 
         self.sections = [
             (1, "Abstract", "Abstract text", "<p>Abstract text</p>"),
@@ -106,6 +107,28 @@ class ExtractorMySQLSyncTest(unittest.TestCase):
                 "SELECT COUNT(*) FROM paper_sections"
             ).fetchone()[0]
         self.assertEqual(stored_count, 2)
+
+    def test_extraction_accepts_versioned_legacy_library_record(self):
+        calls = []
+        repository = types.ModuleType("services.django_paper_repository")
+
+        def replace_paper_sections(paper_id, sections):
+            calls.append((paper_id, list(sections)))
+            return len(calls[0][1])
+
+        repository.replace_paper_sections = replace_paper_sections
+
+        with patch.dict(
+            sys.modules,
+            {
+                "services.django_paper_repository": repository,
+                "services.fulltext_vector_store": self.vector_store_module(),
+            },
+        ):
+            count = extractor_tool.extract_and_save("paper-2")
+
+        self.assertEqual(count, 2)
+        self.assertEqual(calls, [("paper-2", self.sections)])
 
 
 if __name__ == "__main__":

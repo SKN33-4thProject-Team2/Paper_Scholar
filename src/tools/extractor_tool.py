@@ -237,7 +237,13 @@ def extract_and_save(paper_id: str) -> int:
         raise ValueError(err_msg)
 
     with sqlite3.connect(LIBRARY_DB) as library:
-        paper = library.execute("SELECT id FROM papers WHERE id = ?", (clean_id,)).fetchone()
+        paper = library.execute(
+            "SELECT id FROM papers "
+            "WHERE id = ? OR id GLOB ? "
+            "ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END "
+            "LIMIT 1",
+            (clean_id, f"{clean_id}v[0-9]*", clean_id),
+        ).fetchone()
     if not paper:
         err_msg = f"paper_library.papers에 존재하지 않는 paper_id입니다: {clean_id}. 서재 선행 등록 필요"
         logger.log(LogCode.PAPER_EXTRACTION_FAILED, paper_id=clean_id, error=err_msg, error_type="MissingLibraryRecord")
