@@ -197,7 +197,7 @@ function TranslationsTab({ translations, job, canTranslate, onGenerate }) {
   )
 }
 
-export default function PaperDetail({ paper, loading }) {
+export default function PaperDetail({ paper, loading, onPaperUpdated }) {
   const [activeTab, setActiveTab] = useState('overview')
   const [artifacts, setArtifacts] = useState(EMPTY_ARTIFACTS)
   const [artifactLoading, setArtifactLoading] = useState(false)
@@ -232,6 +232,7 @@ export default function PaperDetail({ paper, loading }) {
             paperId: paper.arxiv_id,
             summary,
           }))
+          await onPaperUpdated?.(paper.arxiv_id)
         }
       } catch (requestError) {
         if (!cancelled) setArtifactError(requestError.message)
@@ -244,7 +245,7 @@ export default function PaperDetail({ paper, loading }) {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [paper?.arxiv_id, summaryJobId, summaryJobStatus])
+  }, [paper?.arxiv_id, summaryJobId, summaryJobStatus, onPaperUpdated])
 
   useEffect(() => {
     if (
@@ -268,6 +269,7 @@ export default function PaperDetail({ paper, loading }) {
             paperId: paper.arxiv_id,
             translations,
           }))
+          await onPaperUpdated?.(paper.arxiv_id)
         }
       } catch (requestError) {
         if (!cancelled) setArtifactError(requestError.message)
@@ -280,7 +282,7 @@ export default function PaperDetail({ paper, loading }) {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [paper?.arxiv_id, translationJobId, translationJobStatus])
+  }, [paper?.arxiv_id, translationJobId, translationJobStatus, onPaperUpdated])
 
   const selectTab = async (tabId) => {
     setActiveTab(tabId)
@@ -325,6 +327,7 @@ export default function PaperDetail({ paper, loading }) {
           paperId: paper.arxiv_id,
           summary,
         }))
+        await onPaperUpdated?.(paper.arxiv_id)
       }
     } catch (requestError) {
       setArtifactError(requestError.message)
@@ -351,6 +354,7 @@ export default function PaperDetail({ paper, loading }) {
           paperId: paper.arxiv_id,
           translations,
         }))
+        await onPaperUpdated?.(paper.arxiv_id)
       }
     } catch (requestError) {
       setArtifactError(requestError.message)

@@ -329,6 +329,27 @@ function App() {
     }
   }
 
+  const refreshPaper = useCallback(async (arxivId) => {
+    try {
+      const updatedPaper = await getPaper(arxivId)
+      setSelectedPaper((current) => (
+        current?.arxiv_id === arxivId ? updatedPaper : current
+      ))
+      setPaperPage((current) => (
+        current
+          ? {
+              ...current,
+              results: (current.results || []).map((paper) => (
+                paper.arxiv_id === arxivId ? updatedPaper : paper
+              )),
+            }
+          : current
+      ))
+    } catch (requestError) {
+      setError(requestError.message)
+    }
+  }, [])
+
   if (authLoading) {
     return <div className="auth-loading">로그인 정보를 확인하는 중입니다.</div>
   }
@@ -423,6 +444,7 @@ function App() {
               key={selectedPaper?.arxiv_id || 'empty'}
               paper={selectedPaper}
               loading={detailLoading}
+              onPaperUpdated={refreshPaper}
             />
           </section>
           </div>
