@@ -33,6 +33,7 @@ from scholar.serializers import (
     PaperTranslateRequestSerializer,
     PaperQuestionRequestSerializer,
 )
+from scholar.jobs import enqueue_summary_job, enqueue_translation_job
 
 User = get_user_model()
 logger = logging.getLogger(__name__)
@@ -469,43 +470,80 @@ class PaperSummaryAPIView(generics.RetrieveAPIView):
 
 
 class PaperSummarizeAPIView(APIView):
-    """
-    RunPod LLM 모델 서버 호출 및 자동 Fallback 요약 실행 API
-    """
+    """저장된 본문을 이용하는 비동기 요약 작업을 등록합니다."""
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, arxiv_id, *args, **kwargs):
-        paper = get_object_or_404(Paper, arxiv_id=arxiv_id)
-        prompt = f"Summarize the following paper abstract in Korean:\n\n{paper.abstract}"
+        serializer = PaperSummarizeRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        force = serializer.validated_data["force"]
+        paper = get_object_or_404(
+            Paper,
+            arxiv_id=arxiv_id,
+            library_entries__user=request.user,
+        )
 
-        try:
-            summary_text, used_model = call_llm_with_fallback(
-                prompt=prompt,
-                max_tokens=1024,
-                fallback_type="summary"
+        if not paper.sections.exists():
+            return Response(
+                {"detail": "요약할 본문 섹션이 없습니다. 먼저 본문을 추출해 주세요."},
+                status=status.HTTP_409_CONFLICT,
             )
 
-            summary, _ = PaperSummary.objects.update_or_create(
-                paper=paper,
-                defaults={
-                    "summary_text": summary_text,
-                    "model_name": used_model,
-                },
-            )
+        active_job = paper.processing_jobs.filter(
+            job_type=ProcessingJob.JobType.SUMMARIZE,
+            status__in=(ProcessingJob.Status.PENDING, ProcessingJob.Status.RUNNING),
+        ).first()
+        if active_job is not None:
             return Response(
                 {
-                    "status": "success",
-                    "summary": summary.summary_text,
-                    "model_used": used_model
+                    "message": "이미 요약 작업이 진행 중입니다.",
+                    "job": ProcessingJobSerializer(active_job).data,
                 },
-                status=status.HTTP_200_OK,
+                status=status.HTTP_202_ACCEPTED,
             )
-        except Exception as e:
-            logger.error(f"Paper summarize unhandled error: {e}")
+
+        existing_summary = PaperSummary.objects.filter(paper=paper).first()
+        if existing_summary is not None and not force:
+            completed_job = paper.processing_jobs.filter(
+                user=request.user,
+                job_type=ProcessingJob.JobType.SUMMARIZE,
+                status=ProcessingJob.Status.COMPLETED,
+            ).first()
+            if completed_job is None:
+                now = timezone.now()
+                completed_job = ProcessingJob.objects.create(
+                    user=request.user,
+                    paper=paper,
+                    job_type=ProcessingJob.JobType.SUMMARIZE,
+                    status=ProcessingJob.Status.COMPLETED,
+                    progress_current=1,
+                    progress_total=1,
+                    model_name=existing_summary.model_name,
+                    started_at=now,
+                    completed_at=now,
+                )
             return Response(
-                {"error": f"Failed to summarize paper: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                {
+                    "message": "이미 생성된 요약이 있습니다.",
+                    "job": ProcessingJobSerializer(completed_job).data,
+                }
             )
+
+        job = ProcessingJob.objects.create(
+            user=request.user,
+            paper=paper,
+            job_type=ProcessingJob.JobType.SUMMARIZE,
+            status=ProcessingJob.Status.PENDING,
+            progress_total=1,
+        )
+        enqueue_summary_job(job.id)
+        return Response(
+            {
+                "message": "요약 작업을 시작했습니다.",
+                "job": ProcessingJobSerializer(job).data,
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
 
 
 class PaperTranslationsAPIView(generics.ListAPIView):
@@ -513,61 +551,106 @@ class PaperTranslationsAPIView(generics.ListAPIView):
     특정 논문의 번역 목록 조회
     """
     serializer_class = TranslationSerializer
-    permission_classes = [permissions.IsAuthenticatedOrReadOnly]
+    permission_classes = [permissions.IsAuthenticated]
     # 프론트는 이 응답을 배열 그대로 받아 map() 을 돌린다.
     # 전역 페이지네이션이 {count, results} 로 감싸면 화면이 터지므로 여기서만 끈다.
     pagination_class = None
 
     def get_queryset(self):
-        arxiv_id = self.kwargs.get("arxiv_id")
-        return Translation.objects.filter(paper__arxiv_id=arxiv_id)
+        paper = get_object_or_404(
+            Paper,
+            arxiv_id=self.kwargs["arxiv_id"],
+            library_entries__user=self.request.user,
+        )
+        queryset = paper.translations.select_related("paper")
+        translation_type = self.request.query_params.get("type")
+        if translation_type:
+            queryset = queryset.filter(translation_type=translation_type)
+        target_language = self.request.query_params.get("target_language")
+        if target_language:
+            queryset = queryset.filter(target_language=target_language)
+        return queryset
 
 
 class PaperTranslateAPIView(APIView):
-    """
-    논문 한국어 번역 API (RunPod 우선 호출 및 Fallback)
-    """
+    """최종 논문 요약을 번역하는 비동기 작업을 등록합니다."""
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, arxiv_id, *args, **kwargs):
-        paper = get_object_or_404(Paper, arxiv_id=arxiv_id)
-        source_text = paper.abstract or paper.title
-        prompt = f"Translate the following academic paper abstract into natural Korean:\n\n{source_text}"
+        serializer = PaperTranslateRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        params = serializer.validated_data
+        paper = get_object_or_404(
+            Paper,
+            arxiv_id=arxiv_id,
+            library_entries__user=request.user,
+        )
 
-        try:
-            translated_text, used_model = call_llm_with_fallback(
-                prompt=prompt,
-                max_tokens=1024,
-                fallback_type="translation"
+        if not PaperSummary.objects.filter(paper=paper).exists():
+            return Response(
+                {"detail": "번역할 요약이 없습니다. 먼저 요약을 생성해 주세요."},
+                status=status.HTTP_409_CONFLICT,
             )
 
-            translation, _ = Translation.objects.update_or_create(
-                paper=paper,
-                translation_type="abstract",
-                target_language="ko",
-                defaults={
-                    "source_language": "en",
-                    "source_text": source_text,
-                    "translated_text": translated_text,
-                    "model_name": used_model,
-                },
-            )
-
+        active_job = paper.processing_jobs.filter(
+            job_type=ProcessingJob.JobType.TRANSLATE,
+            status__in=(ProcessingJob.Status.PENDING, ProcessingJob.Status.RUNNING),
+        ).first()
+        if active_job is not None:
             return Response(
                 {
-                    "status": "success",
-                    "message": "Translation completed",
-                    "translated_text": translation.translated_text,
-                    "model_used": used_model
+                    "message": "이미 번역 작업이 진행 중입니다.",
+                    "job": ProcessingJobSerializer(active_job).data,
                 },
-                status=status.HTTP_200_OK,
+                status=status.HTTP_202_ACCEPTED,
             )
-        except Exception as e:
-            logger.error(f"Paper translate unhandled error: {e}")
+
+        existing_translation = Translation.objects.filter(
+            paper=paper,
+            translation_type=Translation.TranslationType.SUMMARY,
+            target_language=params["target_language"],
+        ).first()
+        if existing_translation is not None and not params["force"]:
+            completed_job = paper.processing_jobs.filter(
+                user=request.user,
+                job_type=ProcessingJob.JobType.TRANSLATE,
+                status=ProcessingJob.Status.COMPLETED,
+            ).first()
+            if completed_job is None:
+                now = timezone.now()
+                completed_job = ProcessingJob.objects.create(
+                    user=request.user,
+                    paper=paper,
+                    job_type=ProcessingJob.JobType.TRANSLATE,
+                    status=ProcessingJob.Status.COMPLETED,
+                    progress_current=1,
+                    progress_total=1,
+                    model_name=existing_translation.model_name,
+                    started_at=now,
+                    completed_at=now,
+                )
             return Response(
-                {"error": f"Failed to translate paper: {str(e)}"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                {
+                    "message": "이미 생성된 번역이 있습니다.",
+                    "job": ProcessingJobSerializer(completed_job).data,
+                }
             )
+
+        job = ProcessingJob.objects.create(
+            user=request.user,
+            paper=paper,
+            job_type=ProcessingJob.JobType.TRANSLATE,
+            status=ProcessingJob.Status.PENDING,
+            progress_total=1,
+        )
+        enqueue_translation_job(job.id)
+        return Response(
+            {
+                "message": "번역 작업을 시작했습니다.",
+                "job": ProcessingJobSerializer(job).data,
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
 
 
 class PaperQuestionAPIView(APIView):

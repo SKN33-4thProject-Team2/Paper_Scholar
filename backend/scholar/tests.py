@@ -1,4 +1,5 @@
 from django.contrib.auth import get_user_model
+from django.test import SimpleTestCase
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
@@ -15,6 +16,26 @@ from .models import (
 
 
 User = get_user_model()
+
+
+class TranslationMarkupFallbackTest(SimpleTestCase):
+    def test_translation_falls_back_to_piecewise_text_when_tokens_are_lost(self):
+        from .services.translation_service import translate_chunk_preserving_markup
+
+        class TokenDroppingService:
+            def translate(self, prompt):
+                if "__APRAG_PROTECTED_000001__" in prompt:
+                    return "보호 토큰을 누락한 번역"
+                return "번역된 텍스트"
+
+        translated = translate_chunk_preserving_markup(
+            TokenDroppingService(),
+            r"Before \(x + y\) after.",
+        )
+
+        self.assertIn(r"\(x + y\)", translated)
+        self.assertNotIn("__APRAG_PROTECTED_", translated)
+        self.assertGreaterEqual(translated.count("번역된 텍스트"), 2)
 
 
 class AuthenticationAPITest(APITestCase):

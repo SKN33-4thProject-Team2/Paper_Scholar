@@ -1,4 +1,9 @@
 import { useEffect, useState } from 'react'
+import ReactMarkdown from 'react-markdown'
+import rehypeKatex from 'rehype-katex'
+import remarkGfm from 'remark-gfm'
+import remarkMath from 'remark-math'
+import 'katex/dist/katex.min.css'
 import {
   getProcessingJob,
   getPaperSections,
@@ -21,6 +26,25 @@ const TRANSLATION_TYPE_LABELS = {
   summary: '요약',
   section: '본문 섹션',
   full_text: '전체 본문',
+}
+
+function normalizeMathMarkdown(value = '') {
+  return value
+    .replace(/\\\[([\s\S]*?)\\\]/g, (_match, math) => `$$\n${math.trim()}\n$$`)
+    .replace(/\\\(([\s\S]*?)\\\)/g, (_match, math) => `$${math.trim()}$`)
+}
+
+function MarkdownContent({ text }) {
+  return (
+    <div className="artifact-markdown">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm, remarkMath]}
+        rehypePlugins={[rehypeKatex]}
+      >
+        {normalizeMathMarkdown(text)}
+      </ReactMarkdown>
+    </div>
+  )
 }
 
 function OverviewTab({ paper }) {
@@ -105,7 +129,7 @@ function SummaryTab({ summary, job, canSummarize, onGenerate }) {
             <span>섹션 {summary.section_count}개</span>
             <span>청크 {summary.chunk_count}개</span>
           </div>
-          <p>{summary.summary_text}</p>
+          <MarkdownContent text={summary.summary_text} />
         </section>
       )}
     </div>
@@ -163,7 +187,7 @@ function TranslationsTab({ translations, job, canTranslate, onGenerate }) {
                 </span>
                 {translation.model_name && <span>모델 {translation.model_name}</span>}
               </div>
-              <p>{translation.translated_text}</p>
+              <MarkdownContent text={translation.translated_text} />
             </section>
           ))}
         </div>
