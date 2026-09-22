@@ -152,12 +152,23 @@ class PaperAPITest(AuthenticatedAPITestCase):
             title="Paper without artifacts",
             authors=[],
         )
+        cls.legacy_paper = Paper.objects.create(
+            arxiv_id="hep-ex/0306056",
+            title="Legacy arXiv paper",
+            authors=["Test Author"],
+        )
+        PaperSection.objects.create(
+            paper=cls.legacy_paper,
+            section_order=1,
+            section_title="Introduction",
+            section_text="Legacy paper body",
+        )
 
     def test_list_papers_returns_paginated_mysql_shape(self):
         response = self.client.get(reverse("scholar:paper-list"))
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["count"], 2)
+        self.assertEqual(response.data["count"], 3)
         paper = next(
             item
             for item in response.data["results"]
@@ -202,6 +213,29 @@ class PaperAPITest(AuthenticatedAPITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["arxiv_id"], "1702.01806")
         self.assertEqual(response.data["entry_url"], self.paper.entry_url)
+
+    def test_detail_accepts_legacy_arxiv_id_with_slash(self):
+        response = self.client.get(
+            reverse(
+                "scholar:paper-detail",
+                kwargs={"arxiv_id": self.legacy_paper.arxiv_id},
+            )
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["arxiv_id"], "hep-ex/0306056")
+
+    def test_child_route_accepts_legacy_arxiv_id_with_slash(self):
+        response = self.client.get(
+            reverse(
+                "scholar:paper-sections",
+                kwargs={"arxiv_id": self.legacy_paper.arxiv_id},
+            )
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(len(response.data), 1)
+        self.assertEqual(response.data[0]["section_text"], "Legacy paper body")
 
     def test_detail_returns_404_for_unknown_paper(self):
         response = self.client.get(
