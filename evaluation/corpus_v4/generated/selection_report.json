@@ -1,0 +1,13 @@
+{
+  "dataset_target": "200 papers across five topics",
+  "paper_count": 200,
+  "unique_paper_count": 200,
+  "topic_counts": {
+    "llm": 40,
+    "machine_learning": 40,
+    "deep_learning": 40,
+    "transformer": 40,
+    "rag": 40
+  },
+  "selection_rule": "arXiv API relevance order; unique paper IDs across the requested topic groups"
+}

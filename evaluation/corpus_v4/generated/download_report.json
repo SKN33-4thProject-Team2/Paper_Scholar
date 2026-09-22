@@ -1,0 +1,14 @@
+{
+  "paper_count": 200,
+  "unique_paper_count": 200,
+  "topic_counts": {
+    "llm": 40,
+    "machine_learning": 40,
+    "deep_learning": 40,
+    "transformer": 40,
+    "rag": 40
+  },
+  "pdf_count": 200,
+  "missing_pdf_ids": [],
+  "total_pdf_bytes": 506059685
+}

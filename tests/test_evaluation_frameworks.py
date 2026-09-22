@@ -93,14 +93,14 @@ class FrameworkCaseTest(unittest.TestCase):
             suite="pipeline",
             question="논문을 요약해줘",
             answer="요약 완료",
-            expected_steps=("extract", "translate", "summarize"),
-            actual_steps=("extract", "translate", "summarize"),
+            expected_steps=("extract", "summarize", "translate"),
+            actual_steps=("extract", "summarize", "translate"),
         )
         payloads = build_deepeval_payloads([self.case, workflow])
         self.assertEqual(payloads[0]["retrieval_context"], list(self.case.contexts))
         self.assertEqual(
             payloads[1]["expected_tools"],
-            ["extract", "translate", "summarize"],
+            ["extract", "summarize", "translate"],
         )
 
 

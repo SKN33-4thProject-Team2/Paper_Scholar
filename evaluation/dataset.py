@@ -145,14 +145,14 @@ PIPELINE_CASES: tuple[dict[str, Any], ...] = (
         "case_id": "pipeline-translate",
         "query": "2007.13199v2 논문을 번역해줘.",
         "paper_ids": ["2007.13199v2"],
-        "expected_steps": ["extract", "translate"],
+        "expected_steps": ["extract", "summarize", "translate"],
         "expected_output_keys": ["translated_paths"],
     },
     {
         "case_id": "pipeline-summary",
         "query": "2007.13199v2 논문을 요약해줘.",
         "paper_ids": ["2007.13199v2"],
-        "expected_steps": ["extract", "translate", "summarize"],
+        "expected_steps": ["extract", "summarize"],
         "expected_output_keys": ["summaries"],
     },
     {
