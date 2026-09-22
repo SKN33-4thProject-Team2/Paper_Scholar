@@ -37,8 +37,10 @@ keyword:
 # GPU 없는 장비에서는 논문 한 편에 20~50분이 걸린다.
 # provider 를 ollama 로 되돌리고 model 을 translategemma:4b 로 바꾸면 예전대로 돈다.
 translation:
-  provider: ollama
-  model: qwen2.5:3b
+  # 2026-09-21 측정: 같은 요약문 4,125자를 qwen2.5:3b(CPU)는 258초에 옮기면서 보호 토큰을
+  # 8개 중 3개만 남겨 작업이 실패했고, 아래 모델은 8.6초에 8개를 모두 지켰다.
+  provider: nvidia
+  model: nvidia/nemotron-3-super-120b-a12b
   stream: true
   temperature: 0.2
   max_tokens: 4096
@@ -56,8 +58,9 @@ translation:
 # 더 작은 모델은 스키마 덕에 키는 채우지만 값이 비어 _parse_response 에서 걸린다.
 # 키워드 도구가 이미 쓰는 모델이라 따로 받을 것도 없다.
 summary:
-  provider: ollama
-  model: qwen2.5:3b
+  # 2026-09-21 측정: 같은 논문(13회 호출)을 qwen2.5:3b(CPU)는 766초, 아래 모델은 64.8초에 끝냈다.
+  provider: nvidia
+  model: nvidia/nemotron-3-super-120b-a12b
   temperature: 0.0
   max_tokens: 1536
   timeout: 300

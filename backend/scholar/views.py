@@ -99,7 +99,7 @@ def paper_api_queryset(user=None):
                 PaperSummary.objects.filter(paper_id=OuterRef("pk"))
             ),
         )
-        .order_by("-published_at", "-created_at")
+        .order_by("-updated_at")
     )
     if user is not None and getattr(user, "is_authenticated", False):
         queryset = queryset.filter(library_entries__user=user)
@@ -243,6 +243,7 @@ class PaperSectionsAPIView(generics.ListAPIView):
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
     def get_queryset(self):
+<<<<<<< HEAD
         arxiv_id = self.kwargs.get("arxiv_id")
         return PaperSection.objects.filter(paper__arxiv_id=arxiv_id).order_by("section_order")
 
@@ -364,3 +365,8 @@ class ProcessingJobDetailAPIView(generics.RetrieveAPIView):
     serializer_class = ProcessingJobSerializer
     permission_classes = [permissions.IsAuthenticated]
     queryset = ProcessingJob.objects.select_related("paper")
+=======
+        return ProcessingJob.objects.select_related("paper").filter(
+            paper__library_entries__user=self.request.user
+        )
+>>>>>>> 9accb5e2011d05379cae6c5dc39ae2eb53ddd792

@@ -57,21 +57,7 @@ export default function AuthPage() {
     <main className="auth-shell">
       <section className="auth-story">
         <div className="auth-story__brand">
-          <span className="brand-mark brand-mark--book" aria-hidden="true">
-            <svg viewBox="0 0 72 62" role="presentation">
-              <defs>
-                <linearGradient id="paper-logo-blue-auth" x1="0" y1="0" x2="1" y2="1">
-                  <stop offset="0" stopColor="#70b6db" />
-                  <stop offset="1" stopColor="#2f6f9d" />
-                </linearGradient>
-              </defs>
-              <path className="brand-mark__spark" d="M36 2l3.7 10.3L50 16l-10.3 3.7L36 30l-3.7-10.3L22 16l10.3-3.7L36 2z" />
-              <path className="brand-mark__book brand-mark__book--auth" d="M35.5 27.7C28.8 22.5 20.4 21 10 23.6v29.2c10.4-2.6 18.8-1.1 25.5 4.1V27.7z" />
-              <path className="brand-mark__book brand-mark__book--auth" d="M36.5 27.7C43.2 22.5 51.6 21 62 23.6v29.2c-10.4-2.6-18.8-1.1-25.5 4.1V27.7z" />
-              <path className="brand-mark__spine" d="M36 28v29" />
-              <path className="brand-mark__line" d="M15 31c5.4-1 10.2-.2 14.5 2.4M15 39c5.4-1 10.2-.2 14.5 2.4M57 31c-5.4-1-10.2-.2-14.5 2.4M57 39c-5.4-1-10.2-.2-14.5 2.4" />
-            </svg>
-          </span>
+          <img className="brand-mark" src="/brand/symbol-white.svg" alt="" width="52" height="52" aria-hidden="true" />
           <span><strong><span>Paper</span> <em>Scholar</em></strong><small>학술 논문 작업실</small></span>
         </div>
         <div className="auth-story__copy">
