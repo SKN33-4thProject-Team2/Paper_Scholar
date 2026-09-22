@@ -1,4 +1,4 @@
-from django.urls import path
+from django.urls import path, register_converter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
 from .supervisor_views import (
@@ -24,6 +24,24 @@ from .views import (
 )
 
 app_name = "scholar"
+
+
+class ArxivIdConverter:
+    """신형 ID와 ``hep-ex/0306056`` 같은 구형 arXiv ID를 허용합니다."""
+
+    # 구형 ID의 앞부분은 영문 카테고리이며, 신형 ID에는 슬래시가 없다.
+    # 임의의 두 경로 조각을 허용하면 ``.../sections`` 같은 하위 API 이름까지
+    # 논문 ID로 삼킬 수 있으므로 이 형태만 명시적으로 허용한다.
+    regex = r"(?:[A-Za-z][A-Za-z0-9.-]*/)?[A-Za-z0-9][A-Za-z0-9._-]*"
+
+    def to_python(self, value):
+        return value
+
+    def to_url(self, value):
+        return value
+
+
+register_converter(ArxivIdConverter, "arxiv")
 
 urlpatterns = [
     # 헬스 체크
@@ -71,18 +89,20 @@ urlpatterns = [
     path("jobs/<int:pk>/", ProcessingJobDetailAPIView.as_view(), name="processing-job-detail"),
 
     # 논문 상세 및 하위 서빙 엔드포인트
-    path("papers/<str:arxiv_id>", PaperDetailAPIView.as_view(), name="paper-detail-noslash"),
-    path("papers/<str:arxiv_id>/", PaperDetailAPIView.as_view(), name="paper-detail"),
-    path("papers/<str:arxiv_id>/sections", PaperSectionsAPIView.as_view(), name="paper-sections-noslash"),
-    path("papers/<str:arxiv_id>/sections/", PaperSectionsAPIView.as_view(), name="paper-sections"),
-    path("papers/<str:arxiv_id>/summary", PaperSummaryAPIView.as_view(), name="paper-summary-noslash"),
-    path("papers/<str:arxiv_id>/summary/", PaperSummaryAPIView.as_view(), name="paper-summary"),
-    path("papers/<str:arxiv_id>/summarize", PaperSummarizeAPIView.as_view(), name="paper-summarize-noslash"),
-    path("papers/<str:arxiv_id>/summarize/", PaperSummarizeAPIView.as_view(), name="paper-summarize"),
-    path("papers/<str:arxiv_id>/translations", PaperTranslationsAPIView.as_view(), name="paper-translations-noslash"),
-    path("papers/<str:arxiv_id>/translations/", PaperTranslationsAPIView.as_view(), name="paper-translations"),
-    path("papers/<str:arxiv_id>/translate", PaperTranslateAPIView.as_view(), name="paper-translate-noslash"),
-    path("papers/<str:arxiv_id>/translate/", PaperTranslateAPIView.as_view(), name="paper-translate"),
-    path("papers/<str:arxiv_id>/ask", PaperQuestionAPIView.as_view(), name="paper-question-noslash"),
-    path("papers/<str:arxiv_id>/ask/", PaperQuestionAPIView.as_view(), name="paper-question"),
+    path("papers/<arxiv:arxiv_id>/sections", PaperSectionsAPIView.as_view(), name="paper-sections-noslash"),
+    path("papers/<arxiv:arxiv_id>/sections/", PaperSectionsAPIView.as_view(), name="paper-sections"),
+    path("papers/<arxiv:arxiv_id>/summary", PaperSummaryAPIView.as_view(), name="paper-summary-noslash"),
+    path("papers/<arxiv:arxiv_id>/summary/", PaperSummaryAPIView.as_view(), name="paper-summary"),
+    path("papers/<arxiv:arxiv_id>/summarize", PaperSummarizeAPIView.as_view(), name="paper-summarize-noslash"),
+    path("papers/<arxiv:arxiv_id>/summarize/", PaperSummarizeAPIView.as_view(), name="paper-summarize"),
+    path("papers/<arxiv:arxiv_id>/translations", PaperTranslationsAPIView.as_view(), name="paper-translations-noslash"),
+    path("papers/<arxiv:arxiv_id>/translations/", PaperTranslationsAPIView.as_view(), name="paper-translations"),
+    path("papers/<arxiv:arxiv_id>/translate", PaperTranslateAPIView.as_view(), name="paper-translate-noslash"),
+    path("papers/<arxiv:arxiv_id>/translate/", PaperTranslateAPIView.as_view(), name="paper-translate"),
+    path("papers/<arxiv:arxiv_id>/ask", PaperQuestionAPIView.as_view(), name="paper-question-noslash"),
+    path("papers/<arxiv:arxiv_id>/ask/", PaperQuestionAPIView.as_view(), name="paper-question"),
+
+    # 구형 ID가 슬래시를 포함하므로 상세 경로는 하위 리소스 경로 뒤에 둡니다.
+    path("papers/<arxiv:arxiv_id>", PaperDetailAPIView.as_view(), name="paper-detail-noslash"),
+    path("papers/<arxiv:arxiv_id>/", PaperDetailAPIView.as_view(), name="paper-detail"),
 ]
