@@ -1,4 +1,5 @@
 name: Deploy to EC2
+run-name: Deploy ${{ github.ref_name }} (${{ github.event_name == 'workflow_dispatch' && inputs.target || 'changed areas' }})
 
 on:
   push:
@@ -30,11 +31,29 @@ jobs:
     outputs:
       frontend: ${{ steps.changes.outputs.frontend }}
       backend: ${{ steps.changes.outputs.backend }}
+      deploy_ref: ${{ steps.deploy-ref.outputs.ref }}
+      deploy_sha: ${{ steps.deploy-ref.outputs.sha }}
     steps:
       - name: 소스 체크아웃
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: 선택한 배포 버전 고정
+        id: deploy-ref
+        shell: bash
+        env:
+          SELECTED_REF: ${{ github.ref_name }}
+          SELECTED_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          # workflow_dispatch 화면에서 고른 브랜치의 커밋을 이후 모든 job이
+          # 동일하게 사용하도록 SHA로 고정한다. push 이벤트에서는 main의 SHA다.
+          git cat-file -e "${SELECTED_SHA}^{commit}"
+          echo "ref=$SELECTED_REF" | tee -a "$GITHUB_OUTPUT"
+          echo "sha=$SELECTED_SHA" | tee -a "$GITHUB_OUTPUT"
+          echo "배포 버전: $SELECTED_REF ($SELECTED_SHA)"
 
       - name: 배포 대상 결정
         id: changes
@@ -43,7 +62,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           MANUAL_TARGET: ${{ inputs.target }}
           BEFORE_SHA: ${{ github.event.before }}
-          CURRENT_SHA: ${{ github.sha }}
+          CURRENT_SHA: ${{ steps.deploy-ref.outputs.sha }}
         run: |
           set -euo pipefail
 
@@ -113,6 +132,8 @@ jobs:
     steps:
       - name: 소스 체크아웃
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.detect-changes.outputs.deploy_sha }}
 
       - name: Node 설치
         uses: actions/setup-node@v4
@@ -191,7 +212,7 @@ jobs:
             set -e
             cd /home/ubuntu/Paper_Scholar
 
-            DEPLOY_SHA="${{ github.sha }}"
+            DEPLOY_SHA="${{ needs.detect-changes.outputs.deploy_sha }}"
 
             echo "[1/5] 배포 대상 커밋 동기화: $DEPLOY_SHA"
             git fetch --all --prune
@@ -247,6 +268,8 @@ jobs:
     steps:
       - name: Job summary 작성
         env:
+          DEPLOY_REF: ${{ needs.detect-changes.outputs.deploy_ref }}
+          DEPLOY_SHA: ${{ needs.detect-changes.outputs.deploy_sha }}
           FRONTEND_SELECTED: ${{ needs.detect-changes.outputs.frontend }}
           BACKEND_SELECTED: ${{ needs.detect-changes.outputs.backend }}
           FRONTEND_RESULT: ${{ needs.deploy-frontend.result }}
@@ -254,6 +277,9 @@ jobs:
         run: |
           {
             echo "## 배포 결과"
+            echo
+            echo "- 브랜치: \`$DEPLOY_REF\`"
+            echo "- 커밋: \`$DEPLOY_SHA\`"
             echo
             echo "| 영역 | 선택됨 | 결과 |"
             echo "|---|---:|---|"
