@@ -37,13 +37,23 @@ if command -v npm >/dev/null 2>&1; then
   (
     cd frontend
     # package-lock.json이 그대로면 이미 받은 의존성을 그대로 쓴다.
-    LOCK_HASH="$(sha256sum package-lock.json | cut -d' ' -f1)"
+    # 해시를 구하지 못하면 건너뛰지 않고 반드시 설치한다. 빈 해시를 기록해두면
+    # 이후 배포에서 lock이 바뀌어도 계속 건너뛰게 되기 때문이다.
+    LOCK_HASH="$(sha256sum package-lock.json 2>/dev/null | cut -d' ' -f1)"
     STAMP_FILE="node_modules/.deploy-lock-hash"
-    if [ -d node_modules ] && [ -f "$STAMP_FILE" ] && [ "$(cat "$STAMP_FILE")" = "$LOCK_HASH" ]; then
+    if [ -n "$LOCK_HASH" ] \
+      && [ -d node_modules ] \
+      && [ -f "$STAMP_FILE" ] \
+      && [ "$(cat "$STAMP_FILE")" = "$LOCK_HASH" ]; then
       echo "  의존성 변경 없음 - 설치를 건너뜁니다."
     else
       npm ci
-      echo "$LOCK_HASH" > "$STAMP_FILE"
+      if [ -n "$LOCK_HASH" ]; then
+        echo "$LOCK_HASH" > "$STAMP_FILE"
+      else
+        echo "  경고: package-lock.json 해시를 구하지 못해 다음 배포에서도 설치합니다."
+        rm -f "$STAMP_FILE"
+      fi
     fi
     npm run build
   )
