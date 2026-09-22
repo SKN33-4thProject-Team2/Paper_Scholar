@@ -1,11 +1,5 @@
 import { useEffect, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import rehypeKatex from 'rehype-katex'
-import remarkGfm from 'remark-gfm'
-import remarkMath from 'remark-math'
-import 'katex/dist/katex.min.css'
 import {
-  extractPaper,
   getProcessingJob,
   getPaperSections,
   getPaperSummary,
@@ -29,25 +23,6 @@ const TRANSLATION_TYPE_LABELS = {
   full_text: '전체 본문',
 }
 
-function normalizeMathMarkdown(value = '') {
-  return value
-    .replace(/\\\[([\s\S]*?)\\\]/g, (_match, math) => `$$\n${math.trim()}\n$$`)
-    .replace(/\\\(([\s\S]*?)\\\)/g, (_match, math) => `$${math.trim()}$`)
-}
-
-function MarkdownContent({ text }) {
-  return (
-    <div className="artifact-markdown">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex]}
-      >
-        {normalizeMathMarkdown(text)}
-      </ReactMarkdown>
-    </div>
-  )
-}
-
 function OverviewTab({ paper }) {
   return (
     <div className="paper-tab-content">
@@ -69,72 +44,14 @@ function OverviewTab({ paper }) {
   )
 }
 
-function isHtmlUnavailableError(message = '') {
-  return (
-    message.includes('arXiv HTML을 찾을 수 없습니다 (404 Not Found)')
-    || message.includes('HTML 렌더링이 제공되지')
-  )
-}
-
-function SectionsTab({ paper, sections, job, onGenerate }) {
-  const sectionList = Array.isArray(sections) ? sections : []
-  const isRunning = job?.status === 'pending' || job?.status === 'running'
-  const htmlUnavailable = (
-    job?.status === 'failed' && isHtmlUnavailableError(job.error_message)
-  )
-  const pdfUrl = paper.pdf_url || `https://arxiv.org/pdf/${paper.arxiv_id}`
-  if (sectionList.length === 0) {
-    return (
-      <div className="sections-tab">
-        <div className="artifact-actions">
-          <div>
-            <strong>
-              {htmlUnavailable
-                ? 'HTML 본문 미지원'
-                : isRunning
-                ? '본문 추출 중'
-                : job?.status === 'failed'
-                  ? '본문 추출 실패'
-                  : '본문 추출 필요'}
-            </strong>
-            {htmlUnavailable ? (
-              <>
-                <span>이 논문은 arXiv HTML 본문을 제공하지 않아 자동 추출이 어렵습니다.</span>
-                <span>PDF 원문을 직접 확인해 주세요.</span>
-              </>
-            ) : (
-              <span>
-                {job?.status === 'failed'
-                  ? job.error_message
-                  : '논문 원문에서 본문 섹션을 추출합니다.'}
-              </span>
-            )}
-          </div>
-          {htmlUnavailable ? (
-            <a
-              className="artifact-action-link"
-              href={pdfUrl}
-              target="_blank"
-              rel="noreferrer"
-            >
-              PDF 원문 보기
-            </a>
-          ) : (
-            <button type="button" disabled={isRunning} onClick={onGenerate}>
-              {isRunning ? '추출 중…' : job?.status === 'failed' ? '다시 시도' : '본문 추출'}
-            </button>
-          )}
-        </div>
-        {!htmlUnavailable && (
-          <div className="artifact-empty">아직 추출된 본문 섹션이 없습니다.</div>
-        )}
-      </div>
-    )
+function SectionsTab({ sections }) {
+  if (sections.length === 0) {
+    return <div className="artifact-empty">아직 추출된 본문 섹션이 없습니다.</div>
   }
 
   return (
     <div className="section-list">
-      {sectionList.map((section) => (
+      {sections.map((section) => (
         <section
           className="section-card"
           key={`${section.section_order}-${section.section_title}`}
@@ -188,7 +105,7 @@ function SummaryTab({ summary, job, canSummarize, onGenerate }) {
             <span>섹션 {summary.section_count}개</span>
             <span>청크 {summary.chunk_count}개</span>
           </div>
-          <MarkdownContent text={summary.summary_text} />
+          <p>{summary.summary_text}</p>
         </section>
       )}
     </div>
@@ -246,7 +163,7 @@ function TranslationsTab({ translations, job, canTranslate, onGenerate }) {
                 </span>
                 {translation.model_name && <span>모델 {translation.model_name}</span>}
               </div>
-              <MarkdownContent text={translation.translated_text} />
+              <p>{translation.translated_text}</p>
             </section>
           ))}
         </div>
@@ -255,23 +172,17 @@ function TranslationsTab({ translations, job, canTranslate, onGenerate }) {
   )
 }
 
-export default function PaperDetail({ paper, loading, onPaperUpdated }) {
+export default function PaperDetail({ paper, loading }) {
   const [activeTab, setActiveTab] = useState('overview')
   const [artifacts, setArtifacts] = useState(EMPTY_ARTIFACTS)
   const [artifactLoading, setArtifactLoading] = useState(false)
   const [artifactError, setArtifactError] = useState('')
-  const [extractionJob, setExtractionJob] = useState(null)
   const [summaryJob, setSummaryJob] = useState(null)
   const [translationJob, setTranslationJob] = useState(null)
 
   const paperArtifacts = artifacts.paperId === paper?.arxiv_id
     ? artifacts
     : EMPTY_ARTIFACTS
-  const currentExtractionJob = extractionJob?.arxiv_id === paper?.arxiv_id
-    ? extractionJob
-    : paper?.latest_extraction_job || null
-  const extractionJobId = currentExtractionJob?.id
-  const extractionJobStatus = currentExtractionJob?.status
   const summaryJobId = summaryJob?.id
   const summaryJobStatus = summaryJob?.status
   const translationJobId = translationJob?.id
@@ -296,7 +207,6 @@ export default function PaperDetail({ paper, loading, onPaperUpdated }) {
             paperId: paper.arxiv_id,
             summary,
           }))
-          await onPaperUpdated?.(paper.arxiv_id)
         }
       } catch (requestError) {
         if (!cancelled) setArtifactError(requestError.message)
@@ -309,7 +219,7 @@ export default function PaperDetail({ paper, loading, onPaperUpdated }) {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [paper?.arxiv_id, summaryJobId, summaryJobStatus, onPaperUpdated])
+  }, [paper?.arxiv_id, summaryJobId, summaryJobStatus])
 
   useEffect(() => {
     if (
@@ -333,7 +243,6 @@ export default function PaperDetail({ paper, loading, onPaperUpdated }) {
             paperId: paper.arxiv_id,
             translations,
           }))
-          await onPaperUpdated?.(paper.arxiv_id)
         }
       } catch (requestError) {
         if (!cancelled) setArtifactError(requestError.message)
@@ -346,44 +255,7 @@ export default function PaperDetail({ paper, loading, onPaperUpdated }) {
       cancelled = true
       window.clearInterval(timer)
     }
-  }, [paper?.arxiv_id, translationJobId, translationJobStatus, onPaperUpdated])
-
-  useEffect(() => {
-    if (
-      !extractionJobId
-      || !['pending', 'running'].includes(extractionJobStatus)
-    ) {
-      return undefined
-    }
-
-    let cancelled = false
-    const pollExtractionJob = async () => {
-      try {
-        const job = await getProcessingJob(extractionJobId)
-        if (cancelled) return
-        setExtractionJob(job)
-        if (job.status === 'completed') {
-          const sections = await getPaperSections(paper.arxiv_id)
-          if (cancelled) return
-          setArtifacts((current) => ({
-            ...(current.paperId === paper.arxiv_id ? current : EMPTY_ARTIFACTS),
-            paperId: paper.arxiv_id,
-            sections,
-          }))
-          await onPaperUpdated?.(paper.arxiv_id)
-        }
-      } catch (requestError) {
-        if (!cancelled) setArtifactError(requestError.message)
-      }
-    }
-
-    const timer = window.setInterval(pollExtractionJob, 2000)
-    pollExtractionJob()
-    return () => {
-      cancelled = true
-      window.clearInterval(timer)
-    }
-  }, [paper?.arxiv_id, extractionJobId, extractionJobStatus, onPaperUpdated])
+  }, [paper?.arxiv_id, translationJobId, translationJobStatus])
 
   const selectTab = async (tabId) => {
     setActiveTab(tabId)
@@ -428,26 +300,6 @@ export default function PaperDetail({ paper, loading, onPaperUpdated }) {
           paperId: paper.arxiv_id,
           summary,
         }))
-        await onPaperUpdated?.(paper.arxiv_id)
-      }
-    } catch (requestError) {
-      setArtifactError(requestError.message)
-    }
-  }
-
-  const generateExtraction = async () => {
-    setArtifactError('')
-    try {
-      const response = await extractPaper(paper.arxiv_id)
-      setExtractionJob(response.job)
-      if (response.job.status === 'completed') {
-        const sections = await getPaperSections(paper.arxiv_id)
-        setArtifacts((current) => ({
-          ...(current.paperId === paper.arxiv_id ? current : EMPTY_ARTIFACTS),
-          paperId: paper.arxiv_id,
-          sections,
-        }))
-        await onPaperUpdated?.(paper.arxiv_id)
       }
     } catch (requestError) {
       setArtifactError(requestError.message)
@@ -474,7 +326,6 @@ export default function PaperDetail({ paper, loading, onPaperUpdated }) {
           paperId: paper.arxiv_id,
           translations,
         }))
-        await onPaperUpdated?.(paper.arxiv_id)
       }
     } catch (requestError) {
       setArtifactError(requestError.message)
@@ -534,12 +385,7 @@ export default function PaperDetail({ paper, loading, onPaperUpdated }) {
           <OverviewTab paper={paper} />
         )}
         {!artifactLoading && !artifactError && activeTab === 'sections' && (
-          <SectionsTab
-            paper={paper}
-            sections={paperArtifacts.sections || []}
-            job={currentExtractionJob}
-            onGenerate={generateExtraction}
-          />
+          <SectionsTab sections={paperArtifacts.sections || []} />
         )}
         {!artifactLoading && !artifactError && activeTab === 'summary' && (
           <SummaryTab
