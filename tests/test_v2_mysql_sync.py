@@ -43,6 +43,21 @@ class V2MySQLSyncTest(unittest.TestCase):
         self.assertIn("$z = 1$", restored)
         self.assertNotIn("$x = y$", restored)
 
+    def test_summary_drops_unrenderable_tex_diagram_line(self) -> None:
+        protection = protect_markup(
+            "Method. $\\begin{matrix}\\lx@xy@svg{diagram}\\end{matrix}$ Result."
+        )
+        token = protection.order[0]
+
+        restored = restore_selected_markup(
+            f"## Method\n- Diagram artifact: {token}\n\n## Conclusion\nUseful result.",
+            protection,
+        )
+
+        self.assertNotIn("lx@xy", restored)
+        self.assertNotIn("Diagram artifact", restored)
+        self.assertIn("Useful result.", restored)
+
     def test_summary_single_call_syncs_final_result(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

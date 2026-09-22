@@ -116,6 +116,12 @@ _MATH = re.compile(
     r"\\end\{(?:equation\*?|align\*?|gather\*?|multline\*?|cases|split|array|matrix|pmatrix|bmatrix)\}"
     r"|\$\$.*?\$\$|\\\[.*?\\\]|(?<!\$)\$(?!\$)(?:\\.|[^$\n])+?(?<!\\)\$(?!\$)", re.S)
 _TOKEN = re.compile(r"__SUMMARY_(?:TABLE|FORMULA)_\d{6}__")
+_UNSAFE_SUMMARY_MARKUP = re.compile(
+    r"\\(?:lx@xy|hskip|mskip|ignorespaces|raisebox|rotatebox|entry@|droprule)"
+    r"|\\begin\{(?:matrix|split|array)\}",
+    re.I,
+)
+_MAX_SUMMARY_MARKUP_CHARS = 500
 _WORD = re.compile(r"[A-Za-z가-힣][A-Za-z가-힣0-9_-]{1,}")
 _IMPORTANT = re.compile(r"\b\d+(?:\.\d+)?\s*%?|\b(?:significant|outperform|improv|achiev|result|propos|conclu|however|limitation|accuracy|precision|recall|f1|loss|dataset)\w*\b", re.I)
 _ARTIFACT_REF = re.compile(
@@ -197,7 +203,22 @@ def restore_selected_markup(text: str, protection: ProtectedText) -> str:
 
     restored = text
     for token in selected:
-        restored = restored.replace(token, protection.replacements[token])
+        original = protection.replacements[token]
+        if (
+            len(original) > _MAX_SUMMARY_MARKUP_CHARS
+            or _UNSAFE_SUMMARY_MARKUP.search(original)
+        ):
+            # TeX 그림·레이아웃 덤프는 KaTeX로 표시할 수 없고 요약도 압도한다.
+            # 해당 placeholder를 언급한 한 줄을 통째로 제거해 문장 파편도 남기지 않는다.
+            restored = re.sub(
+                rf"(?m)^[^\n]*{re.escape(token)}[^\n]*(?:\n|$)",
+                "",
+                restored,
+            )
+            restored = restored.replace(token, "")
+            continue
+        restored = restored.replace(token, original)
+    restored = re.sub(r"\n{3,}", "\n\n", restored).strip()
     if _TOKEN.search(restored):
         raise ValueError("선택된 표/수식 placeholder를 모두 복원하지 못했습니다.")
     return restored

@@ -3,7 +3,8 @@ from django.test import SimpleTestCase
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, call, patch
 
 from .models import (
     LibraryEntry,
@@ -36,6 +37,63 @@ class TranslationMarkupFallbackTest(SimpleTestCase):
         self.assertIn(r"\(x + y\)", translated)
         self.assertNotIn("__APRAG_PROTECTED_", translated)
         self.assertGreaterEqual(translated.count("번역된 텍스트"), 2)
+
+
+class SummaryProviderFallbackTest(SimpleTestCase):
+    def test_retryable_nvidia_error_falls_back_to_single_call_ollama(self):
+        from .services.summary_service import generate_paper_summary
+
+        nvidia_tool = Mock()
+        nvidia_tool.summarize.side_effect = RuntimeError(
+            'NVIDIA API 오류 503: {"error":{"message":"Service temporarily overloaded"}}'
+        )
+        ollama_tool = Mock()
+        ollama_tool.summarize.return_value = SimpleNamespace(model="qwen2.5:3b")
+        stored_summary = Mock(model_name="qwen2.5:3b")
+        paper = SimpleNamespace(arxiv_id="1504.03867", title="Example paper")
+
+        with (
+            patch(
+                "src.tools.summary_tool_v2.SummaryTool",
+                side_effect=(nvidia_tool, ollama_tool),
+            ) as summary_tool_class,
+            patch(
+                "scholar.services.summary_service.PaperSummary.objects.get",
+                return_value=stored_summary,
+            ),
+        ):
+            result = generate_paper_summary(paper)
+
+        self.assertIs(result, stored_summary)
+        self.assertEqual(
+            summary_tool_class.call_args_list,
+            [
+                call(single_call=True),
+                call(provider="ollama", model="qwen2.5:3b", single_call=True),
+            ],
+        )
+        nvidia_tool.summarize.assert_called_once_with(
+            "1504.03867", title="Example paper"
+        )
+        ollama_tool.summarize.assert_called_once_with(
+            "1504.03867", title="Example paper"
+        )
+
+    def test_non_retryable_nvidia_error_is_not_hidden(self):
+        from .services.summary_service import generate_paper_summary
+
+        nvidia_tool = Mock()
+        nvidia_tool.summarize.side_effect = RuntimeError("NVIDIA API 오류 401")
+        paper = SimpleNamespace(arxiv_id="1504.03867", title="Example paper")
+
+        with patch(
+            "src.tools.summary_tool_v2.SummaryTool",
+            return_value=nvidia_tool,
+        ) as summary_tool_class:
+            with self.assertRaisesRegex(RuntimeError, "401"):
+                generate_paper_summary(paper)
+
+        summary_tool_class.assert_called_once_with(single_call=True)
 
 
 class AuthenticationAPITest(APITestCase):

@@ -21,9 +21,12 @@ from dotenv import load_dotenv
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = BASE_DIR.parent
+SRC_DIR = PROJECT_ROOT / "src"
 
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
+if str(SRC_DIR) not in sys.path:
+    sys.path.insert(0, str(SRC_DIR))
 
 # LangGraph Supervisor(src/orchestration)는 내부에서 `from orchestration...`,
 # `from tools...` 형태로 형제 모듈을 부르므로 src/ 자체도 import 루트로 등록한다.
