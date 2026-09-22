@@ -430,6 +430,66 @@ class PaperSectionsAPIView(generics.ListAPIView):
         return PaperSection.objects.filter(paper__arxiv_id=arxiv_id).order_by("section_order")
 
 
+class PaperExtractAPIView(APIView):
+    """본문이 없거나 이전 추출이 실패한 서재 논문의 추출 작업을 등록합니다."""
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, *args, **kwargs):
+        paper = get_object_or_404(
+            Paper,
+            arxiv_id=self.kwargs["arxiv_id"],
+            library_entries__user=request.user,
+        )
+        active_job = paper.processing_jobs.filter(
+            job_type=ProcessingJob.JobType.EXTRACT,
+            status__in=(
+                ProcessingJob.Status.PENDING,
+                ProcessingJob.Status.RUNNING,
+            ),
+        ).first()
+        if active_job is not None:
+            return Response(
+                {"job": ProcessingJobSerializer(active_job).data},
+                status=status.HTTP_202_ACCEPTED,
+            )
+
+        if paper.sections.exists():
+            completed_job = paper.processing_jobs.filter(
+                job_type=ProcessingJob.JobType.EXTRACT,
+                status=ProcessingJob.Status.COMPLETED,
+            ).first()
+            if completed_job is None:
+                now = timezone.now()
+                completed_job = ProcessingJob.objects.create(
+                    user=request.user,
+                    paper=paper,
+                    job_type=ProcessingJob.JobType.EXTRACT,
+                    status=ProcessingJob.Status.COMPLETED,
+                    progress_current=1,
+                    progress_total=1,
+                    started_at=now,
+                    completed_at=now,
+                )
+            return Response(
+                {"job": ProcessingJobSerializer(completed_job).data},
+                status=status.HTTP_200_OK,
+            )
+
+        job = ProcessingJob.objects.create(
+            user=request.user,
+            paper=paper,
+            job_type=ProcessingJob.JobType.EXTRACT,
+            status=ProcessingJob.Status.PENDING,
+            progress_total=1,
+        )
+        enqueue_extraction_job(job.id)
+        return Response(
+            {"job": ProcessingJobSerializer(job).data},
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+
 class PaperSummaryAPIView(generics.RetrieveAPIView):
     """
     논문 요약 결과 단일 조회

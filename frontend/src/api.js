@@ -142,6 +142,14 @@ export async function getPaperSections(arxivId) {
   return unwrapListResponse(payload)
 }
 
+export function extractPaper(arxivId) {
+  return request(`/papers/${encodeURIComponent(arxivId)}/extract/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
+}
+
 export function getPaperSummary(arxivId) {
   return request(`/papers/${encodeURIComponent(arxivId)}/summary/`)
 }

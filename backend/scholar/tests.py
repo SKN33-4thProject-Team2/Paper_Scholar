@@ -621,6 +621,39 @@ class PaperSaveAPITest(AuthenticatedAPITestCase):
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
 
     @patch("scholar.views.enqueue_extraction_job")
+    def test_extract_endpoint_retries_failed_legacy_paper(self, enqueue_mock):
+        paper = Paper.objects.create(
+            arxiv_id="nucl-ex/0104001",
+            title="Legacy arXiv paper",
+            authors=[],
+        )
+        self.add_to_library(paper)
+        failed_job = ProcessingJob.objects.create(
+            user=self.user,
+            paper=paper,
+            job_type=ProcessingJob.JobType.EXTRACT,
+            status=ProcessingJob.Status.FAILED,
+            progress_total=1,
+            error_message="previous extraction failed",
+        )
+
+        response = self.client.post(
+            reverse(
+                "scholar:paper-extract",
+                kwargs={"arxiv_id": paper.arxiv_id},
+            ),
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertNotEqual(response.data["job"]["id"], failed_job.id)
+        retry_job = ProcessingJob.objects.get(pk=response.data["job"]["id"])
+        self.assertEqual(retry_job.status, ProcessingJob.Status.PENDING)
+        self.assertEqual(retry_job.user, self.user)
+        enqueue_mock.assert_called_once_with(retry_job.id)
+
+    @patch("scholar.views.enqueue_extraction_job")
     @patch("src.feature.search.ArxivSearchBot")
     def test_save_service_enqueues_missing_extraction_once(
         self,

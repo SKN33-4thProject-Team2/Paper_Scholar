@@ -108,6 +108,33 @@ class ExtractorMySQLSyncTest(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(stored_count, 2)
 
+    def test_required_django_sync_reports_mysql_failure(self):
+        repository = types.ModuleType("services.django_paper_repository")
+
+        def replace_paper_sections(paper_id, sections):
+            raise RuntimeError("MySQL unavailable")
+
+        repository.replace_paper_sections = replace_paper_sections
+
+        with patch.dict(
+            sys.modules,
+            {
+                "services.django_paper_repository": repository,
+                "services.fulltext_vector_store": self.vector_store_module(),
+            },
+        ):
+            with self.assertRaisesRegex(RuntimeError, "MySQL unavailable"):
+                extractor_tool.extract_and_save(
+                    "paper-1",
+                    require_django_sync=True,
+                )
+
+        with sqlite3.connect(self.extracted_db) as connection:
+            stored_count = connection.execute(
+                "SELECT COUNT(*) FROM paper_sections"
+            ).fetchone()[0]
+        self.assertEqual(stored_count, 2)
+
     def test_extraction_accepts_versioned_legacy_library_record(self):
         calls = []
         repository = types.ModuleType("services.django_paper_repository")

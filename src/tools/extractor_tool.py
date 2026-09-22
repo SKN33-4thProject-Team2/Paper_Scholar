@@ -222,8 +222,13 @@ class ArxivExtractor:
         return self.extract_sections(self.fetch_html(paper_id))
 
 
-def extract_and_save(paper_id: str) -> int:
-    """서재 DB 등록을 검증하고, 추출 DB에 섹션을 적재한 뒤 Chroma 벡터 색인을 즉시 동기화한다."""
+def extract_and_save(paper_id: str, *, require_django_sync: bool = False) -> int:
+    """서재 DB 등록을 검증하고, 추출 DB에 섹션을 적재한 뒤 Chroma 벡터 색인을 즉시 동기화한다.
+
+    Django 비동기 작업에서는 ``require_django_sync``를 켜서 MySQL 저장까지
+    성공한 경우에만 작업을 완료 처리합니다. 기존 CLI 흐름은 SQLite 우선의
+    최선형 동작을 그대로 유지합니다.
+    """
     clean_id = re.sub(r"v\d+$", "", paper_id.strip())
     init_schema()
 
@@ -275,6 +280,8 @@ def extract_and_save(paper_id: str) -> int:
                 f"  [Notice] MySQL 본문 섹션 동기화 경고 "
                 f"({clean_id}): {mysql_err}"
             )
+            if require_django_sync:
+                raise
 
         # 3. SQLite 적재 완료 직후 Chroma 본문 벡터 스토어 즉시 색인 동기화
         try:

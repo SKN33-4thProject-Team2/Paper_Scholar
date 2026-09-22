@@ -10,6 +10,7 @@ from .views import (
     ArxivSearchAPIView,
     CurrentUserAPIView,
     PaperDetailAPIView,
+    PaperExtractAPIView,
     PaperListAPIView,
     PaperQuestionAPIView,
     PaperSaveAPIView,
@@ -91,6 +92,8 @@ urlpatterns = [
     # 논문 상세 및 하위 서빙 엔드포인트
     path("papers/<arxiv:arxiv_id>/sections", PaperSectionsAPIView.as_view(), name="paper-sections-noslash"),
     path("papers/<arxiv:arxiv_id>/sections/", PaperSectionsAPIView.as_view(), name="paper-sections"),
+    path("papers/<arxiv:arxiv_id>/extract", PaperExtractAPIView.as_view(), name="paper-extract-noslash"),
+    path("papers/<arxiv:arxiv_id>/extract/", PaperExtractAPIView.as_view(), name="paper-extract"),
     path("papers/<arxiv:arxiv_id>/summary", PaperSummaryAPIView.as_view(), name="paper-summary-noslash"),
     path("papers/<arxiv:arxiv_id>/summary/", PaperSummaryAPIView.as_view(), name="paper-summary"),
     path("papers/<arxiv:arxiv_id>/summarize", PaperSummarizeAPIView.as_view(), name="paper-summarize-noslash"),
