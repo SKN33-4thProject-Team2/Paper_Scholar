@@ -179,6 +179,10 @@ REST_FRAMEWORK = {
     'DEFAULT_PERMISSION_CLASSES': [
         'rest_framework.permissions.AllowAny',                      # 비로그인 브라우저 화면 조회 허용으로 변경
     ],
+    # 프론트가 {count, results} 모양을 기대한다. 이 설정이 빠지면 목록이
+    # 맨 배열로 나가고, 화면에서 results 를 읽다가 터진다.
+    'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
+    'PAGE_SIZE': 20,
 }
 
 SIMPLE_JWT = {
