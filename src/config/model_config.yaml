@@ -45,7 +45,8 @@ translation:
   temperature: 0.2
   max_tokens: 4096
   timeout: 600
-  chunk_chars: 7000
+  # 일반 텍스트 청크 크기. 표·수식은 구조 보존을 위해 별도 블록으로 유지한다.
+  chunk_chars: 1500
   max_retries: 2
   retry_backoff_seconds: 2.0
   output_directory: data/paper_translate
