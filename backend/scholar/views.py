@@ -1,5 +1,6 @@
 import logging
 import os
+import re
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -9,10 +10,12 @@ from django.contrib.auth import get_user_model
 from django.db.models import Count, Exists, OuterRef
 from django.http import JsonResponse
 from django.shortcuts import get_object_or_404
+from django.utils import timezone
 from rest_framework import generics, permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
+from scholar.jobs import enqueue_extraction_job
 from scholar.models import Paper, PaperSection, LibraryEntry, PaperSummary, ProcessingJob, Translation
 from scholar.serializers import (
     UserSerializer,
@@ -290,40 +293,149 @@ class PaperDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
 
 
 class PaperSaveAPIView(APIView):
-    """
-    검색된 논문을 내 서재에 저장
-    """
+    """검색한 논문을 내 서재에 저장하고, 요청하면 본문 추출 작업까지 건다."""
+
     permission_classes = [permissions.IsAuthenticated]
 
-    def post(self, request, *args, **kwargs):
-        arxiv_id = request.data.get("arxiv_id") or request.data.get("id")
-        title = request.data.get("title", "")
-        authors = request.data.get("authors", [])
-        abstract = request.data.get("summary") or request.data.get("abstract", "")
+    @staticmethod
+    def _normalize_arxiv_id(value) -> str:
+        """버전 접미사를 뗀다.
 
-        if not arxiv_id:
+        추출 결과는 항상 버전 없는 ID 로 저장된다(replace_paper_sections 가
+        normalize 한 ID 로 Paper 를 찾는다). 여기서 맞춰두지 않으면 저장은 되는데
+        추출 작업이 Paper.DoesNotExist 로 조용히 실패한다.
+        """
+        return re.sub(r"v\d+$", "", str(value or "").strip())
+
+    @staticmethod
+    def _read_papers(data) -> tuple[list[dict], bool]:
+        """요청 본문에서 논문 목록과 추출 여부를 꺼낸다.
+
+        프론트는 {papers: [...], extract_content: bool} 로 보내고,
+        일부 호출부는 논문 한 편을 최상위에 펼쳐 보낸다. 둘 다 받는다.
+        """
+        extract_content = bool(data.get("extract_content", True))
+
+        if isinstance(data.get("papers"), list):
+            return list(data["papers"]), extract_content
+
+        single = {
+            "arxiv_id": data.get("arxiv_id") or data.get("id"),
+            "title": data.get("title", ""),
+            "authors": data.get("authors", []),
+            "abstract": data.get("summary") or data.get("abstract", ""),
+            "pdf_url": data.get("pdf_url", ""),
+        }
+        return ([single] if single["arxiv_id"] else []), extract_content
+
+    @staticmethod
+    def _register_in_library(paper: Paper) -> None:
+        """추출기가 요구하는 서재 DB(saved_papers.db) 행을 보장한다.
+
+        extract_and_save 는 이 행이 없으면 "서재 선행 등록 필요" 로 실패한다.
+        등록이 안 되더라도 저장 자체는 성공시키고, 추출 작업이 이유를 남기게 둔다.
+        """
+        try:
+            from tools.extractor_tool import ensure_library_record
+
+            ensure_library_record(
+                paper.arxiv_id,
+                title=paper.title,
+                authors=", ".join(paper.authors or []),
+                summary=paper.abstract,
+                pdf_url=paper.pdf_url,
+            )
+        except Exception as error:
+            logger.warning(f"서재 DB 등록 실패 ({paper.arxiv_id}): {error}")
+
+    def _extraction_job(self, paper: Paper, user) -> ProcessingJob:
+        """추출 작업을 찾거나 새로 만든다. 이미 본문이 있으면 다시 추출하지 않는다."""
+        if paper.sections.exists():
+            job = paper.processing_jobs.filter(
+                job_type=ProcessingJob.JobType.EXTRACT,
+                status=ProcessingJob.Status.COMPLETED,
+                user=user,
+            ).first()
+            if job is None:
+                now = timezone.now()
+                job = ProcessingJob.objects.create(
+                    user=user,
+                    paper=paper,
+                    job_type=ProcessingJob.JobType.EXTRACT,
+                    status=ProcessingJob.Status.COMPLETED,
+                    progress_current=1,
+                    progress_total=1,
+                    started_at=now,
+                    completed_at=now,
+                )
+            return job
+
+        # 같은 논문에 대기·실행 중인 작업이 있으면 그것을 돌려준다.
+        job = paper.processing_jobs.filter(
+            job_type=ProcessingJob.JobType.EXTRACT,
+            status__in=(
+                ProcessingJob.Status.PENDING,
+                ProcessingJob.Status.RUNNING,
+            ),
+        ).first()
+        if job is None:
+            job = ProcessingJob.objects.create(
+                user=user,
+                paper=paper,
+                job_type=ProcessingJob.JobType.EXTRACT,
+                status=ProcessingJob.Status.PENDING,
+                progress_total=1,
+            )
+            enqueue_extraction_job(job.id)
+        return job
+
+    def post(self, request, *args, **kwargs):
+        papers, extract_content = self._read_papers(request.data)
+        if not papers:
             return Response(
                 {"detail": "arxiv_id가 필요합니다."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        paper, _ = Paper.objects.update_or_create(
-            arxiv_id=arxiv_id,
-            defaults={
-                "title": title,
-                "authors": authors,
-                "abstract": abstract,
-                "download_status": Paper.DownloadStatus.READY,
-            },
-        )
-        LibraryEntry.objects.get_or_create(user=request.user, paper=paper)
+        saved_papers = []
+        jobs = []
+        for item in papers:
+            arxiv_id = self._normalize_arxiv_id(
+                item.get("arxiv_id") or item.get("id")
+            )
+            if not arxiv_id:
+                continue
+
+            paper, _created = Paper.objects.update_or_create(
+                arxiv_id=arxiv_id,
+                defaults={
+                    "title": item.get("title", ""),
+                    "authors": item.get("authors", []),
+                    "abstract": item.get("summary") or item.get("abstract", ""),
+                    "pdf_url": item.get("pdf_url", "") or "",
+                    "download_status": Paper.DownloadStatus.READY,
+                },
+            )
+            LibraryEntry.objects.get_or_create(user=request.user, paper=paper)
+            saved_papers.append(paper)
+
+            if extract_content:
+                self._register_in_library(paper)
+                jobs.append(self._extraction_job(paper, request.user))
+
+        if not saved_papers:
+            return Response(
+                {"detail": "arxiv_id가 필요합니다."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
 
         return Response(
             {
                 "status": "success",
-                "message": "Paper saved to library successfully",
-                "paper_id": arxiv_id,
-                "jobs": [{"job_id": f"job_{arxiv_id}", "status": "completed"}],
+                "message": f"{len(saved_papers)}편을 서재에 저장했습니다.",
+                "paper_id": saved_papers[0].arxiv_id,
+                "papers": [paper.arxiv_id for paper in saved_papers],
+                "jobs": ProcessingJobSerializer(jobs, many=True).data,
             },
             status=status.HTTP_201_CREATED,
         )
