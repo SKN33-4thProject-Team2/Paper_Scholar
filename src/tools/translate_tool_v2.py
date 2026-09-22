@@ -32,8 +32,10 @@ from services.translation_markdown_service import (
 )
 from services.model_config_service import load_task_config
 from tools import PAPER_TRANSLATE_DIR, SUMMARY_DB, TRANSLATE_DB
+from log import AppLogger, LogCode
 
 load_dotenv()
+logger = AppLogger(__name__)
 
 DEFAULT_SUMMARY_DB = SUMMARY_DB
 DEFAULT_TRANSLATE_DIR = PAPER_TRANSLATE_DIR
@@ -68,14 +70,33 @@ Do not add explanations, comments, or code fences.
         chunk_chars = min(self.chunk_chars, 1500)
         chunks = split_markdown(content, max_chars=chunk_chars)
         translated_chunks: list[str] = []
-        for chunk in chunks:
-            protection = protect_translation_markup(chunk)
-            translated = self.service.translate(f"{self.PROMPT}\n{protection.text}")
-            result = restore_translation_markup(translated.strip(), protection)
-            korean_chars = sum("가" <= char <= "힣" for char in result)
-            if korean_chars == 0 and any("A" <= char <= "z" for char in chunk):
-                raise RuntimeError("번역 결과가 한국어가 아닙니다.")
-            translated_chunks.append(result)
+        for index, chunk in enumerate(chunks, 1):
+            logger.log(
+                LogCode.TRANSLATION_CHUNK_STARTED,
+                chunk_index=index,
+                total_chunks=len(chunks),
+                model=self.model,
+                source_chars=len(chunk),
+            )
+            try:
+                protection = protect_translation_markup(chunk)
+                translated = self.service.translate(f"{self.PROMPT}\n{protection.text}")
+                result = restore_translation_markup(translated.strip(), protection)
+                korean_chars = sum("가" <= char <= "힣" for char in result)
+                if korean_chars == 0 and any("A" <= char <= "z" for char in chunk):
+                    raise RuntimeError("번역 결과가 한국어가 아닙니다.")
+                translated_chunks.append(result)
+            except Exception as exc:
+                logger.log(
+                    LogCode.TRANSLATION_FAILED,
+                    reason="chunk_translation_failed",
+                    error_type=type(exc).__name__,
+                    error=str(exc),
+                    chunk_index=index,
+                    total_chunks=len(chunks),
+                    model=self.model,
+                )
+                raise
         return "\n\n".join(translated_chunks), len(chunks)
 
 
@@ -218,44 +239,79 @@ class TranslateTool:
 
     def translate_database(self, paper_ids: list[str] | None = None) -> list[Path]:
         """원본 DB를 읽어 번역 DB에 저장하고 Markdown 파일을 만든다."""
-        rows = self._read_summaries(paper_ids)
-        if not rows:
-            raise ValueError("번역할 요약 결과가 없습니다.")
-        self.translate_db.parent.mkdir(parents=True, exist_ok=True)
-        self.markdown_dir.mkdir(parents=True, exist_ok=True)
-        now = datetime.now(timezone.utc).isoformat()
-        outputs: list[Path] = []
-        mysql_sync_rows: list[tuple[str, str, str, int]] = []
-        with sqlite3.connect(self.translate_db) as db:
-            self._init_db(db)
-            for row in rows:
-                source = str(row["summary_text"] or "").strip()
-                if not source:
-                    continue
-                translated, chunk_count = self.translator.translate(source)
-                db.execute("""INSERT INTO translations
-                    (paper_id, title, source_summary, translated_summary, chunk_count, created_at, updated_at)
-                    VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ON CONFLICT(paper_id) DO UPDATE SET
-                    title=excluded.title, source_summary=excluded.source_summary,
-                    translated_summary=excluded.translated_summary, chunk_count=excluded.chunk_count,
-                    updated_at=excluded.updated_at""",
-                    (row["paper_id"], row["title"] or row["paper_id"], source,
-                     translated, chunk_count, now, now))
-                mysql_sync_rows.append(
-                    (str(row["paper_id"]), source, translated, chunk_count)
-                )
-                outputs.append(self.export_markdown(str(row["paper_id"]), db=db,
-                                                    title=str(row["title"] or row["paper_id"]),
-                                                    translated=str(translated)))
-            db.commit()
-        for paper_id, source, translated, chunk_count in mysql_sync_rows:
-            self._sync_translation_to_mysql(
-                paper_id,
-                source,
-                translated,
-                chunk_count,
+        logger.log(
+            LogCode.TRANSLATION_STARTED,
+            paper_ids=paper_ids or [],
+            model=str(getattr(self.translator, "model", "")),
+        )
+        try:
+            rows = self._read_summaries(paper_ids)
+        except Exception as exc:
+            logger.log(
+                LogCode.TRANSLATION_FAILED,
+                reason="source_read_failed",
+                error_type=type(exc).__name__,
+                error=str(exc),
             )
+            raise
+        if not rows:
+            logger.log(
+                LogCode.TRANSLATION_REJECTED,
+                reason="no_summary_results",
+                paper_ids=paper_ids or [],
+            )
+            raise ValueError("번역할 요약 결과가 없습니다.")
+        try:
+            self.translate_db.parent.mkdir(parents=True, exist_ok=True)
+            self.markdown_dir.mkdir(parents=True, exist_ok=True)
+            now = datetime.now(timezone.utc).isoformat()
+            outputs: list[Path] = []
+            mysql_sync_rows: list[tuple[str, str, str, int]] = []
+            with sqlite3.connect(self.translate_db) as db:
+                self._init_db(db)
+                for row in rows:
+                    source = str(row["summary_text"] or "").strip()
+                    if not source:
+                        continue
+                    translated, chunk_count = self.translator.translate(source)
+                    db.execute("""INSERT INTO translations
+                        (paper_id, title, source_summary, translated_summary, chunk_count, created_at, updated_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                        ON CONFLICT(paper_id) DO UPDATE SET
+                        title=excluded.title, source_summary=excluded.source_summary,
+                        translated_summary=excluded.translated_summary, chunk_count=excluded.chunk_count,
+                        updated_at=excluded.updated_at""",
+                        (row["paper_id"], row["title"] or row["paper_id"], source,
+                         translated, chunk_count, now, now))
+                    mysql_sync_rows.append(
+                        (str(row["paper_id"]), source, translated, chunk_count)
+                    )
+                    outputs.append(self.export_markdown(str(row["paper_id"]), db=db,
+                                                        title=str(row["title"] or row["paper_id"]),
+                                                        translated=str(translated)))
+                db.commit()
+            for paper_id, source, translated, chunk_count in mysql_sync_rows:
+                self._sync_translation_to_mysql(
+                    paper_id,
+                    source,
+                    translated,
+                    chunk_count,
+                )
+        except Exception as exc:
+            logger.log(
+                LogCode.TRANSLATION_FAILED,
+                reason="translation_database_failed",
+                error_type=type(exc).__name__,
+                error=str(exc),
+                row_count=len(rows),
+            )
+            raise
+        logger.log(
+            LogCode.TRANSLATION_SUCCEEDED,
+            row_count=len(rows),
+            output_count=len(outputs),
+            model=str(getattr(self.translator, "model", "")),
+        )
         return outputs
 
     # 기존 호출부와의 호환용 별칭
@@ -276,6 +332,11 @@ class TranslateTool:
                 title, translated = str(row[0]), str(row[1])
             path = self.markdown_dir / f"{self._safe_name(paper_id)}.md"
             path.write_text(f"# {title}\n\n{translated.rstrip()}\n", encoding="utf-8")
+            logger.log(
+                LogCode.TRANSLATION_MARKDOWN_SAVED,
+                paper_id=paper_id,
+                output_path=path,
+            )
             return path
         finally:
             if close:

@@ -18,6 +18,7 @@ from typing import Callable
 
 from dotenv import load_dotenv
 
+from log import AppLogger, LogCode
 from tools import EXTRACTED_DB, SUMMARY_DB
 from services.model_config_service import load_task_config
 
@@ -35,6 +36,7 @@ DEFAULT_RETRY_BACKOFF = float(SUMMARY_CONFIG.get("retry_backoff_seconds", 2.0))
 DEFAULT_TEMPERATURE = float(SUMMARY_CONFIG.get("temperature", 0.0))
 
 load_dotenv()
+logger = AppLogger(__name__)
 
 
 def generate_with_gemini(prompt: str, *, model: str, max_tokens: int,
@@ -303,7 +305,18 @@ class SummaryTool:
     def _generate(self, prompt: str, **kwargs: object) -> str:
         """모델을 호출하고 호출 횟수를 기록한다."""
         self.generation_calls += 1
-        return str(self.generator(prompt, **kwargs))
+        try:
+            return str(self.generator(prompt, **kwargs))
+        except Exception as exc:
+            logger.log(
+                LogCode.SUMMARY_FAILED,
+                reason="generation_failed",
+                error_type=type(exc).__name__,
+                error=str(exc),
+                model=self.model,
+                generation_call=self.generation_calls,
+            )
+            raise
 
     def _sync_summary_to_mysql(
         self,
@@ -488,6 +501,12 @@ class SummaryTool:
         except ValueError:
             if not protection.order:
                 raise
+            logger.log(
+                LogCode.SUMMARY_RETRYING,
+                reason="markup_placeholder_repair",
+                placeholder_count=len(protection.order),
+                model=self.model,
+            )
             tokens = ", ".join(protection.order)
             repair_prompt = (
                 f"{MARKUP_REPAIR_PROMPT}\n필수 placeholder 순서: {tokens}\n"
@@ -506,12 +525,35 @@ class SummaryTool:
                 return restore_markup_safely(str(repaired).strip(), protection)
 
     def summarize(self, paper_id: str, *, title: str | None = None) -> SummaryResult:
+        logger.log(
+            LogCode.SUMMARY_STARTED,
+            paper_id=paper_id,
+            model=self.model,
+            provider=self.provider,
+            single_call=self.single_call,
+        )
         db_title, sections = self._read_sections(paper_id)
         title = title or db_title
         if not sections:
+            logger.log(
+                LogCode.SUMMARY_REJECTED,
+                paper_id=paper_id,
+                reason="empty_content",
+            )
             raise ValueError("요약할 본문이 비어 있습니다.")
         if self.single_call:
-            return self._summarize_single_call(paper_id, title, sections)
+            result = self._summarize_single_call(paper_id, title, sections)
+            logger.log(
+                LogCode.SUMMARY_SUCCEEDED,
+                paper_id=paper_id,
+                title=title,
+                model=self.model,
+                section_count=len(sections),
+                chunk_count=result.chunk_count,
+                generation_calls=self.generation_calls,
+                single_call=True,
+            )
+            return result
         now = datetime.now(timezone.utc).isoformat()
         final_chunks: list[tuple[int, int, str, str, str, str]] = []
         chunk_inputs: list[str] = []
@@ -523,6 +565,15 @@ class SummaryTool:
                 # 긴 섹션은 문단 경계를 유지해 나눈 뒤, 각 청크에서 핵심 문장만 선별한다.
                 chunks = paragraph_chunks(protected.text, self.max_chars)
                 for index, chunk in enumerate(chunks, 1):
+                    logger.log(
+                        LogCode.SUMMARY_CHUNK_STARTED,
+                        paper_id=paper_id,
+                        section_order=section_order,
+                        section_title=section_title,
+                        chunk_index=index,
+                        total_chunks=len(chunks),
+                        model=self.model,
+                    )
                     protection = protected_for_chunk(chunk, protected)
                     original_chunk = restore_markup(chunk, protection)
                     items = [protected.replacements[t] for t in _TOKEN.findall(chunk) if t in protected.replacements]
@@ -544,6 +595,14 @@ class SummaryTool:
 
             combined = "\n\n".join(chunk_inputs)
             combined_protection = protect_markup(combined)
+            logger.log(
+                LogCode.SUMMARY_REDUCE_STARTED,
+                paper_id=paper_id,
+                title=title,
+                section_count=len(sections),
+                chunk_count=len(final_chunks),
+                model=self.model,
+            )
             prompt = f"{language_instruction(combined)}\n{PAPER_PROMPT}\n논문 제목: {title}\n[섹션별 요약]\n{combined_protection.text}"
             artifacts = [f"{token}: {combined_protection.replacements[token]}" for token in combined_protection.order]
             if artifacts:
@@ -570,12 +629,31 @@ class SummaryTool:
         )
         markdown = self._build_markdown(title, paper_summary)
         result = SummaryResult(paper_id, title, markdown, len(final_chunks), self.model)
+        logger.log(
+            LogCode.SUMMARY_SUCCEEDED,
+            paper_id=paper_id,
+            title=title,
+            model=self.model,
+            section_count=len(sections),
+            chunk_count=len(final_chunks),
+            generation_calls=self.generation_calls,
+            single_call=False,
+        )
         return result
 
     def _summarize_single_call(
         self, paper_id: str, title: str, sections: list[tuple[int, str, str]]
     ) -> SummaryResult:
         """TF-IDF로 줄인 모든 섹션을 한 번에 요약한다."""
+        logger.log(
+            LogCode.SUMMARY_REDUCE_STARTED,
+            paper_id=paper_id,
+            title=title,
+            section_count=len(sections),
+            chunk_count=1,
+            model=self.model,
+            single_call=True,
+        )
         selected = []
         for _order, section_title, section_text in sections:
             core = extractive_section_summary(section_text, section_title, max_sentences=5)
@@ -643,6 +721,11 @@ class SummaryTool:
         path = Path(output_path)
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(self.load_markdown(paper_id), encoding="utf-8")
+        logger.log(
+            LogCode.SUMMARY_MARKDOWN_SAVED,
+            paper_id=paper_id,
+            output_path=path,
+        )
         return path
 
 
