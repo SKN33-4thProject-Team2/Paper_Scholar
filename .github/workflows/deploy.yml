@@ -84,6 +84,13 @@ jobs:
               -e DB_HOST="${{ secrets.DB_HOST }}" \
               -e DB_PORT="$DB_PORT_VAL" \
               -e RUNPOD_API_URL="https://llm.skn33-project.store" \
+              -e OPENAI_API_KEY="${{ secrets.OPENAI_API_KEY }}" \
+              -e OPENAI_CHAT_MODEL="${{ secrets.OPENAI_CHAT_MODEL }}" \
+              -e NVIDIA_API_KEY="${{ secrets.NVIDIA_API_KEY }}" \
+              -e GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
+              -e LANGSMITH_API_KEY="${{ secrets.LANGSMITH_API_KEY }}" \
+              -e LANGSMITH_PROJECT="${{ secrets.LANGSMITH_PROJECT }}" \
+              -e LANGSMITH_TRACING="${{ secrets.LANGSMITH_TRACING }}" \
               lizcha01/paper-scholar:latest
 
             echo "[4/5] DB 마이그레이션 적용..."
