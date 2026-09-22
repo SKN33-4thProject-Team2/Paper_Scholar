@@ -132,8 +132,22 @@ export function getPaper(arxivId) {
   return request(`/papers/${encodeURIComponent(arxivId)}/`)
 }
 
-export function getPaperSections(arxivId) {
-  return request(`/papers/${encodeURIComponent(arxivId)}/sections/`)
+function unwrapListResponse(payload) {
+  if (Array.isArray(payload)) return payload
+  return Array.isArray(payload?.results) ? payload.results : []
+}
+
+export async function getPaperSections(arxivId) {
+  const payload = await request(`/papers/${encodeURIComponent(arxivId)}/sections/`)
+  return unwrapListResponse(payload)
+}
+
+export function extractPaper(arxivId) {
+  return request(`/papers/${encodeURIComponent(arxivId)}/extract/`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({}),
+  })
 }
 
 export function getPaperSummary(arxivId) {
@@ -148,8 +162,9 @@ export function summarizePaper(arxivId, force = false) {
   })
 }
 
-export function getPaperTranslations(arxivId) {
-  return request(`/papers/${encodeURIComponent(arxivId)}/translations/`)
+export async function getPaperTranslations(arxivId) {
+  const payload = await request(`/papers/${encodeURIComponent(arxivId)}/translations/`)
+  return unwrapListResponse(payload)
 }
 
 export function translatePaper(arxivId, targetLanguage = 'ko', force = false) {
@@ -194,22 +209,10 @@ export function getProcessingJob(jobId) {
   return request(`/jobs/${encodeURIComponent(jobId)}/`)
 }
 
-export function createSupervisorPlan(query) {
+export function createSupervisorPlan(message) {
   return request('/supervisor/plan/', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query }),
+    body: JSON.stringify({ message }),
   })
-}
-
-export function startSupervisorRun(query, threadId) {
-  return request('/supervisor/run/', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ query, thread_id: threadId || '' }),
-  })
-}
-
-export function getSupervisorRun(runId) {
-  return request(`/supervisor/run/${encodeURIComponent(runId)}/`)
 }
