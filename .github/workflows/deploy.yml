@@ -1,30 +1,61 @@
-name: Deploy Backend to AWS EC2
+name: Deploy Backend to EC2
 
 on:
   push:
-    branches:
-      - main
-    paths:
-      - 'backend/**'
-      - 'requirements.txt'
-      - 'Dockerfile'
-      - '.dockerignore'
-      - 'deploy.sh'
-      - '.github/workflows/deploy.yml'
+    branches: [ "main" ]
 
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
-      - name: SSH를 통한 EC2 증분 배포 실행
+      - name: Deploy to EC2 via SSH
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.EC2_HOST }}
-          username: ${{ secrets.EC2_USERNAME }}
+          username: ${{ secrets.EC2_USER }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          timeout: 60m
+          command_timeout: 60m
           script: |
+            set -e
             cd /home/ubuntu/Paper_Scholar
-            git pull origin main
-            chmod +x deploy.sh
-            ./deploy.sh
+
+            echo "[1/5] 원격 소스 코드 최신화..."
+            git fetch --all
+            git reset --hard origin/main
+
+            echo "[2/5] 새 Docker 이미지 빌드 (기존 서비스 무중단 유지)..."
+            # 기존 서버가 도는 상태에서 새 이미지를 먼저 빌드
+            sudo docker build -t lizcha01/paper-scholar:latest .
+
+            echo "[3/5] 컨테이너 즉시 교체 (다운타임 1~2초)..."
+            sudo docker stop paper-scholar 2>/dev/null || true
+            sudo docker rm paper-scholar 2>/dev/null || true
+
+            # 포트 번호 기본값 안전 처리
+            DB_PORT_VAL="${{ secrets.DB_PORT }}"
+            DB_PORT_VAL="${DB_PORT_VAL:-33062}"
+
+            sudo docker run -d \
+              --name paper-scholar \
+              -p 8000:8000 \
+              --dns 8.8.8.8 \
+              --dns 8.8.4.4 \
+              --restart always \
+              -e DJANGO_SECRET_KEY="${{ secrets.DJANGO_SECRET_KEY }}" \
+              -e DB_NAME="${{ secrets.DB_NAME }}" \
+              -e DB_USER="${{ secrets.DB_USER }}" \
+              -e DB_PASSWORD="${{ secrets.DB_PASSWORD }}" \
+              -e DB_HOST="${{ secrets.DB_HOST }}" \
+              -e DB_PORT="$DB_PORT_VAL" \
+              -e RUNPOD_API_URL="https://llm.skn33-project.store" \
+              lizcha01/paper-scholar:latest
+
+            echo "[4/5] DB 마이그레이션 적용..."
+            sleep 3
+            sudo docker exec paper-scholar python manage.py migrate --noinput || true
+
+            echo "[5/5] 미사용 댕글링 이미지만 정리 (빌드 캐시 보존)..."
+            sudo docker image prune -f
+
+            echo "=== 증분 배포 완료 ==="
