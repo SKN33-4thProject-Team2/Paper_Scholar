@@ -41,7 +41,7 @@ arXiv와 PDF 학술 논문을 수집·파싱·인덱싱하여 논문 검색, 번
 | 박기현 | 팀장·통합 | 일정 관리, 기능 통합, LangGraph |
 | 오호민 | PM·논문 검색 | arXiv 검색, 논문 저장, PDF 다운로드 |
 | 김영석 | PDF 처리 | PDF 본문·표·수식 추출 및 정제 |
-| 정현두 | 번역·요약 | 전문 번역, 4단 구조 요약, ChromaDB |
+| 정현두 | 번역·요약 | 4단 구조 요약, 요약문 번역, ChromaDB |
 | 김성환 | RAG 질의응답 | Retriever, Deep Research, 출처 반환 |
 
 ## 프로젝트 목표
@@ -49,7 +49,7 @@ arXiv와 PDF 학술 논문을 수집·파싱·인덱싱하여 논문 검색, 번
 - **비용 최소화:** 상시 GPU 서버 대신 로컬 Ollama·CPU 임베딩과 NVIDIA Build API 및 OpenAI API를 조합하여 고정 인프라 비용을 최소화합니다.
 - **선택적 논문 처리:** 검색 결과의 초록을 먼저 확인한 뒤 사용자가 선택한 논문만 다운로드하고 인덱싱합니다.
 - **신뢰도 높은 답변:** 검색 결과와 논문 본문을 근거로 답변하여 환각을 줄입니다.
-- **단계별 사용자 개입:** 번역과 요약 이후 사용자가 원하는 후속 분석을 선택할 수 있도록 Human-in-the-Loop 흐름을 적용합니다.
+- **단계별 사용자 개입:** 요약과 번역 이후 사용자가 원하는 후속 분석을 선택할 수 있도록 Human-in-the-Loop 흐름을 적용합니다.
 - **기능별 에이전트 분리:** LangGraph 기반 Supervisor 에이전트가 검색, 수집, 번역, 요약, RAG 질의응답 및 Deep Research를 나누어 처리합니다.
 
 ## 주요 기능
@@ -57,7 +57,7 @@ arXiv와 PDF 학술 논문을 수집·파싱·인덱싱하여 논문 검색, 번
 1. 사용자 의도와 검색 조건 확인 후 arXiv API로 논문 메타데이터·초록 검색
 2. 사용자가 선택한 논문만 다운로드 및 하이브리드(로컬 파싱 + NVIDIA Vision) PDF 파싱
 3. 텍스트 정제, 청킹, 임베딩 및 ChromaDB 저장
-4. 학술 논문 전문 번역(NVIDIA Build API)과 4단 구조 요약
+4. 본문 기반 4단 구조 요약과 한국어 요약문 번역(NVIDIA Build API)
 5. 저장된 요약 기반 RAG 질의응답 및 근거·출처 제시
 6. RAG가 찾은 논문을 이어받아 심층 분석하는 Deep Research
 7. CLI(`main.py`)와 Streamlit 웹 앱(`web_app.py`) 두 가지 인터페이스 제공
@@ -73,7 +73,7 @@ arXiv 검색 / 로컬 서재 조회 / 다운로드
 ↓
 PDF 본문 추출 (로컬 파싱 + NVIDIA Vision 보정)
 ↓
-전문 번역(NVIDIA Build API) → 4단 구조 요약 → ChromaDB 저장
+4단 구조 요약 → 요약문 번역(NVIDIA Build API) → DB 저장
 ↓
 저장된 요약 기반 RAG 질의응답
 ↓
@@ -141,7 +141,6 @@ AcademicPaper_RAG_Chatbot/
 │   │   ├── provider.py
 │   │   ├── assertions.py
 │   │   └── tests.py
-│   ├── build_evaluation_corpus.py
 │   ├── evaluate_langsmith.py
 │   ├── evaluate_rag_langsmith.py
 │   ├── corpus_v3/                   # 운영 DB와 분리된 평가 전용 코퍼스
@@ -189,15 +188,14 @@ AcademicPaper_RAG_Chatbot/
 │   └── tools/                      # 키워드 생성, 번역, 요약, Deep Research 도구
 │       ├── __init__.py
 │       ├── keyword_tool.py
-│       ├── translation_tool.py
-│       ├── summary_tool.py
+│       ├── translation_tool_v2.py
+│       ├── summary_tool_v2.py
 │       └── deep_search_tool.py
 └── tests/                          # 기능·오케스트레이션 자동화 테스트
     ├── __init__.py
     ├── test_keyword_tool.py
-    ├── test_translation_tool.py
+    ├── test_v2_mysql_sync.py
     ├── test_translation_markdown_service.py
-    ├── test_summary_tool.py
     ├── test_paper_extractor.py
     ├── test_deep_research.py
     ├── test_orchestration.py
@@ -234,13 +232,13 @@ Supervisor 노드가 매 턴 사용자 요청을 해석해 다음에 실행할 �
 
 ### 핵심 분기 규칙
 
-- **신규 자료 검색:** Supervisor → `키워드 생성` → `arXiv 검색` → `다운로드` → `본문 추출` → `번역` → `요약·벡터 저장` → Supervisor로 복귀
+- **신규 자료 검색:** Supervisor → `키워드 생성` → `arXiv 검색` → `다운로드` → `본문 추출` → `요약` → `요약문 번역` → Supervisor로 복귀
 - **검색 결과 없음:** `arXiv 검색` 결과가 비어 있으면 이전과 다른 키워드로 최대 1회 재생성·재시도 후, 그래도 없으면 종료
 - **RAG 질의응답:** Supervisor → `RAG`가 저장된 요약에서 관련 문서를 조회
   - 관련 문서를 찾으면 그 문서를 들고 `Deep Research`로 전달해 심층 분석
-  - 관련 문서가 없으면 Supervisor가 검색·다운로드·추출·번역·요약을 다시 거쳐 `RAG`를 재실행
+  - 관련 문서가 없으면 Supervisor가 검색·다운로드·추출·요약·번역을 다시 거쳐 `RAG`를 재실행
 - **Deep Research:** 심층 답변이 충분하면 종료, 설명이 부족하면 Supervisor에게 추가 검색을 요청
-- **번역:** 이미 추출된 본문이 있으면 바로 번역, 없으면 먼저 본문 추출부터 수행
+- **번역:** 저장된 요약이 있으면 번역하고, 없으면 본문 추출·요약 산출물만 선행으로 보충
 - **종료 조건:** 한 턴에 최대 12단계까지만 진행하며, 초과 시 오류로 종료
 
 ## 스크린샷

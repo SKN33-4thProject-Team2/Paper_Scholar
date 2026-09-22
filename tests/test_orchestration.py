@@ -9,7 +9,7 @@ SRC_ROOT = Path(__file__).resolve().parents[1] / "src"
 if str(SRC_ROOT) not in sys.path:
     sys.path.insert(0, str(SRC_ROOT))
 
-from orchestration.adapters import ArxivSearchNode, KeywordNode
+from orchestration.adapters import ArxivSearchNode, KeywordNode, SummaryNode, TranslateNode
 from orchestration.evaluation import (
     citation_precision,
     reciprocal_rank,
@@ -271,9 +271,49 @@ class StateGraphTest(unittest.TestCase):
         )
         self.assertEqual(
             result["node_history"],
-            ["extract", "translate", "summarize", "finish"],
+            ["extract", "summarize", "finish"],
         )
         self.assertEqual(result["errors"], [])
+
+    def test_translation_injects_only_its_missing_artifact_dependencies(self):
+        result = self.graph.invoke(
+            initial_state("paper-1 논문을 번역해줘", paper_ids=["paper-1"]),
+            config={"configurable": {"thread_id": "test-translation"}},
+        )
+        self.assertEqual(
+            result["node_history"],
+            ["extract", "summarize", "translate", "finish"],
+        )
+        self.assertEqual(result["errors"], [])
+
+    def test_v2_summary_and_translation_adapters_keep_the_graph_contract(self):
+        class FakeSummaryAgent:
+            def run(self, paper_ids):
+                self.paper_ids = paper_ids
+                return {
+                    "summaries": [
+                        {"paper_id": paper_ids[0], "markdown_path": "summary.md"}
+                    ]
+                }
+
+        class FakeTranslationTool:
+            def translate_database(self, paper_ids):
+                self.paper_ids = paper_ids
+                return [Path("translation.md")]
+
+        summary_agent = FakeSummaryAgent()
+        translation_tool = FakeTranslationTool()
+        summary_result = SummaryNode(factory=lambda: summary_agent)(
+            {"paper_ids": ["paper-1"], "extracted_records": [{"id": "paper-1"}]}
+        )
+        translation_result = TranslateNode(translator_factory=lambda: translation_tool)(
+            {"paper_ids": ["paper-1"], "summaries": summary_result["summaries"]}
+        )
+
+        self.assertEqual(summary_agent.paper_ids, ["paper-1"])
+        self.assertEqual(translation_tool.paper_ids, ["paper-1"])
+        self.assertEqual(summary_result["node_history"], ["summarize"])
+        self.assertEqual(translation_result["translated_paths"], ["translation.md"])
 
     def test_empty_search_rebuilds_keywords_once(self):
         search_calls = 0

@@ -54,17 +54,19 @@ Nodes:
 - search: search arXiv; normally place keyword immediately before it
 - library: list or search papers already saved locally
 - download: download already selected/search-result papers
-- extract: extract PDF text; required before translate
-- translate: translate extracted Markdown; required before summarize
-- summarize: summarize translated Markdown and store it in ChromaDB
+- extract: extract PDF text into the shared paper store
+- summarize: create a structured summary from extracted sections
+- translate: translate an existing structured summary
 - deep_search: retrieve relevant passages from exactly one paper saved by PaperExtractor
 - deep_research: answer using only passages returned by deep_search
 - human: ask the user a concise clarifying question; do not run a tool
 
 Rules:
 1. For a new external search use [keyword, search].
-2. For translation use [extract, translate] unless extraction data exists.
-3. For summary use [extract, translate, summarize] unless earlier artifacts exist.
+2. For translation use [translate]. The graph injects only missing extract and
+   summary artifacts when they are actually absent.
+3. For summary use [summarize]. The graph injects extraction only when it is
+   actually absent.
 4. Deep Search is retrieval only; Deep Research is answer generation only.
 5. Do not invent a download step if no selected/search-result papers exist.
 6. Prefer library for list/search requests about locally saved papers.
@@ -74,7 +76,7 @@ Rules:
 8. A request that chains multiple stages (e.g. "find the latest 5 LLM papers,
    translate and summarize them, then explain them") is ONE plan, not
    separate requests — emit the full ordered chain in one call, for example
-   [keyword, search, download, extract, translate, summarize, deep_search]. Only
+   [keyword, search, download, summarize, translate, deep_search]. Only
    include the stages actually implied by the request and skip stages whose
    artifacts already exist per "Available state".
 9. Treat conversational questions about which papers the assistant can explain
@@ -160,7 +162,6 @@ class SupervisorRouter:
         query = state["query"].casefold()
         normalized_query = re.sub(r"\s+", " ", query).strip()
         has_extraction = bool(state.get("extracted_records"))
-        has_translation = bool(state.get("translated_paths"))
         has_candidates = bool(
             state.get("selected_papers")
             or state.get("search_results")
@@ -474,21 +475,23 @@ class SupervisorRouter:
                 "어느 논문을 요약할까요? 논문 제목, paper_id 또는 목록 번호를 알려주세요.",
             )
 
-        # 목록에서 번호로 고른 논문은 paper_ids로 확정한 뒤 전체 처리
-        # 파이프라인에 전달한다. 요약은 번역 결과를 사용하므로 번역을 포함한다.
+        # 목록에서 번호로 고른 논문은 paper_ids로 확정한 뒤 필요한 Agent만
+        # 계획에 넣는다. Summary/Translate의 실제 산출물 의존성은 graph가
+        # 현재 State를 보고 필요한 경우에만 보충한다.
         if selected_candidate_ids and (wants_translate or wants_summarize):
             steps: list[ExecutableRoute] = []
             should_download = wants_download or selection_source == "search"
             if should_download:
                 steps.append("download")
-            steps.extend(["extract", "translate"])
             if wants_summarize:
                 steps.append("summarize")
+            if wants_translate:
+                steps.append("translate")
             if asks_direct_research:
                 steps.append("deep_search")
             return SupervisorDecision(
                 steps=steps,
-                reason="선택한 논문의 추출·번역·요약 파이프라인",
+                reason="선택한 논문의 요약·번역 요청",
                 selected_paper_ids=selected_candidate_ids,
                 download_paper_ids=(
                     selected_candidate_ids if should_download else []
@@ -550,7 +553,7 @@ class SupervisorRouter:
             )
 
         # A request can chain multiple stages in one sentence (e.g. "찾아서
-        # 번역 요약해주고 설명해줘" = search + translate + summarize + explain).
+        # 요약 번역해주고 설명해줘" = search + summarize + translate + explain).
         # Detect that BEFORE the single-purpose keyword checks below, which
         # would otherwise stop at whichever keyword happens to match first
         # and silently drop the rest of the request.
@@ -570,10 +573,10 @@ class SupervisorRouter:
             if wants_translate or wants_summarize:
                 if not has_extraction:
                     steps.append("download")
-                    steps.append("extract")
-                steps.append("translate")
                 if wants_summarize:
                     steps.append("summarize")
+                if wants_translate:
+                    steps.append("translate")
             elif wants_download:
                 steps.append("download")
             if wants_qa or wants_deep:
@@ -594,17 +597,9 @@ class SupervisorRouter:
                 reason="선택한 추출 논문에서 근거 검색 후 심층 답변",
             )
         if any(term in query for term in ("번역", "translate")):
-            steps = [] if has_extraction else ["extract"]
-            steps.append("translate")
-            return SupervisorDecision(steps=steps, reason="번역 요청")
+            return SupervisorDecision(steps=["translate"], reason="요약문 번역 요청")
         if any(term in query for term in ("요약", "summar", "summary")):
-            steps = []
-            if not has_translation:
-                if not has_extraction:
-                    steps.append("extract")
-                steps.append("translate")
-            steps.append("summarize")
-            return SupervisorDecision(steps=steps, reason="요약 파이프라인 요청")
+            return SupervisorDecision(steps=["summarize"], reason="논문 요약 요청")
         if any(term in query for term in ("arxiv", "외부 검색", "논문 찾아", "찾아서", "찾아줘", "검색해")):
             return SupervisorDecision(steps=["keyword", "search"], reason="외부 논문 검색 요청")
         if wants_download:

@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import re
 from dataclasses import asdict, is_dataclass
-from pathlib import Path
 from typing import Any, Callable, Protocol
 
 from orchestration.state import WorkflowState
@@ -75,15 +74,23 @@ def _default_extractor():
 
 
 def _default_translator():
-    from tools.translation_tool import TranslateTool
+    """Return the DB-backed translation tool used by the web service.
+
+    The legacy tool translated an extracted Markdown file directly.  The
+    current application contract stores a structured summary first and then
+    translates that summary, so the LangGraph adapter must use the same v2
+    artifact pipeline as Django instead of maintaining a second one.
+    """
+    from tools.translate_tool_v2 import TranslateTool
 
     return TranslateTool()
 
 
 def _default_summarizer():
-    from tools.summary_tool import SummaryTool
+    """Return the DB-backed summary agent used by the current application."""
+    from agent.summary_agent import SummaryAgent
 
-    return SummaryTool()
+    return SummaryAgent()
 
 
 def _default_deep_search():
@@ -325,15 +332,14 @@ class ExtractNode:
 
 
 class TranslateNode:
+    """Translate existing v2 summary artifacts for the selected papers."""
+
     def __init__(
         self,
         translator_factory: Callable[[], Any] = _default_translator,
-        extractor_factory: Callable[[], Any] = _default_extractor,
     ) -> None:
         self._translator_factory = translator_factory
-        self._extractor_factory = extractor_factory
         self._translator: Any | None = None
-        self._extractor: Any | None = None
 
     @property
     def translator(self):
@@ -341,42 +347,27 @@ class TranslateNode:
             self._translator = self._translator_factory()
         return self._translator
 
-    @property
-    def extractor(self):
-        if self._extractor is None:
-            self._extractor = self._extractor_factory()
-        return self._extractor
-
     def __call__(self, state: WorkflowState) -> dict[str, Any]:
-        records = list(state.get("extracted_records", []))
-        if not records:
-            records = [
-                record
-                for paper_id in state.get("paper_ids", [])
-                if (record := self.extractor.get(paper_id))
+        paper_ids = [
+            str(paper_id).strip()
+            for paper_id in state.get("paper_ids", [])
+            if str(paper_id).strip()
+        ]
+        if not paper_ids:
+            paper_ids = [
+                str(summary.get("paper_id") or summary.get("id") or "").strip()
+                for summary in state.get("summaries", [])
+                if str(summary.get("paper_id") or summary.get("id") or "").strip()
             ]
-        if not records:
-            raise NodeExecutionError("번역 전에 논문 본문 추출이 필요합니다.")
+        if not paper_ids:
+            raise NodeExecutionError("번역할 논문이 선택되지 않았습니다.")
 
-        paths: list[str] = []
-        failures: list[str] = []
-        for record in records:
-            title = str(record.get("title", "")) or str(record.get("id", ""))
-            try:
-                path = self.translator.translate_paper(
-                    record["content"],
-                    paper_id=str(record.get("id", "")),
-                    title=str(record.get("title", "")),
-                )
-            except Exception as exc:  # a single paper's failure must not drop the rest
-                failures.append(f"{title}: {exc}")
-                continue
-            paths.append(str(path))
-
+        try:
+            paths = [str(path) for path in self.translator.translate_database(paper_ids)]
+        except Exception as exc:
+            raise NodeExecutionError(f"요약문 번역에 실패했습니다: {exc}") from exc
         if not paths:
-            raise NodeExecutionError(
-                "모든 논문 번역에 실패했습니다: " + "; ".join(failures)
-            )
+            raise NodeExecutionError("번역 가능한 요약 결과가 없습니다.")
         return {"translated_paths": paths, "node_history": ["translate"]}
 
 
@@ -392,26 +383,27 @@ class SummaryNode:
         return self._tool
 
     def __call__(self, state: WorkflowState) -> dict[str, Any]:
-        paths = [Path(path) for path in state.get("translated_paths", [])]
-        if not paths:
-            raise NodeExecutionError("요약 전에 번역 Markdown 생성이 필요합니다.")
+        paper_ids = [
+            str(paper_id).strip()
+            for paper_id in state.get("paper_ids", [])
+            if str(paper_id).strip()
+        ]
+        if not paper_ids:
+            paper_ids = [
+                str(record.get("id") or record.get("paper_id") or "").strip()
+                for record in state.get("extracted_records", [])
+                if str(record.get("id") or record.get("paper_id") or "").strip()
+            ]
+        if not paper_ids:
+            raise NodeExecutionError("요약할 논문이 선택되지 않았습니다.")
 
-        summaries: list[dict[str, Any]] = []
-        failures: list[str] = []
-        for path in paths:
-            try:
-                summary = _record(self.tool.summarize_file(path))
-            except Exception as exc:  # one paper's failure must not drop the rest
-                failures.append(f"{path.name}: {exc}")
-                continue
-            if summary.get("markdown_path") is not None:
-                summary["markdown_path"] = str(summary["markdown_path"])
-            summaries.append(summary)
-
+        try:
+            result = self.tool.run(paper_ids)
+        except Exception as exc:
+            raise NodeExecutionError(f"논문 요약에 실패했습니다: {exc}") from exc
+        summaries = [dict(summary) for summary in result.get("summaries", [])]
         if not summaries:
-            raise NodeExecutionError(
-                "모든 논문 요약에 실패했습니다: " + "; ".join(failures)
-            )
+            raise NodeExecutionError("요약 결과가 생성되지 않았습니다.")
         return {"summaries": summaries, "node_history": ["summarize"]}
 
 
