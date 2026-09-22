@@ -205,3 +205,47 @@ class ProcessingJob(models.Model):
 
     def __str__(self):
         return f"{self.paper.arxiv_id} - {self.job_type} - {self.status}"
+
+
+# LangGraph Supervisor 실행 1건을 기록합니다. 그래프가 검색·저장·추출·요약·
+# 번역·질의응답 중 필요한 노드만 골라 비동기로 실행하고, 진행 상태와 결과를
+# 여기에 남깁니다. 기존 ProcessingJob은 논문 1편에 묶이지만 Supervisor 실행은
+# 논문이 정해지기 전부터 시작되므로 별도 모델로 둡니다.
+class SupervisorRun(models.Model):
+    class Status(models.TextChoices):
+        PENDING = "pending", "대기"
+        RUNNING = "running", "실행 중"
+        COMPLETED = "completed", "완료"
+        FAILED = "failed", "실패"
+        NEEDS_INPUT = "needs_input", "추가 입력 필요"
+
+    user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="supervisor_runs",
+    )
+    # 같은 thread_id로 이어 보내면 이전 턴의 선택 논문·검색 결과를 기억합니다.
+    thread_id = models.CharField(max_length=64, db_index=True)
+    query = models.TextField()
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.PENDING,
+    )
+    plan = models.JSONField(default=list, blank=True)
+    node_history = models.JSONField(default=list, blank=True)
+    response = models.TextField(blank=True)
+    papers = models.JSONField(default=list, blank=True)
+    sources = models.JSONField(default=list, blank=True)
+    error_message = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    started_at = models.DateTimeField(null=True, blank=True)
+    completed_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-created_at"]
+
+    def __str__(self):
+        return f"{self.thread_id} - {self.status}"
