@@ -34,19 +34,13 @@ User = get_user_model()
 logger = logging.getLogger(__name__)
 
 
-# -------------------------------------------------------------------------
-# 1. 헬스 체크
-# -------------------------------------------------------------------------
 def health_check(request):
     """
-    서버 상태 점검용 엔드포인트
+    서버 헬스 체크
     """
     return JsonResponse({"status": "ok", "service": "Paper Scholar Backend"})
 
 
-# -------------------------------------------------------------------------
-# 2. 인증 관련 뷰
-# -------------------------------------------------------------------------
 class RegisterAPIView(APIView):
     """
     회원가입 API
@@ -69,7 +63,7 @@ class RegisterAPIView(APIView):
 
 class CurrentUserAPIView(APIView):
     """
-    현재 로그인된 사용자 정보 조회 API
+    현재 로그인된 사용자 정보 조회
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -78,13 +72,9 @@ class CurrentUserAPIView(APIView):
         return Response(serializer.data, status=status.HTTP_200_OK)
 
 
-# -------------------------------------------------------------------------
-# 3. 논문 쿼리셋 공통 함수
-# -------------------------------------------------------------------------
 def paper_api_queryset(user=None):
     """
-    Paper 목록/상세 API 공통 쿼리셋.
-    summary_records 역참조 에러를 방지하고 관련 필드만 최적화하여 조회합니다.
+    Paper 목록/상세 공통 쿼리셋 (summary_records 에러 차단 및 역참조 최적화)
     """
     queryset = (
         Paper.objects.prefetch_related(
@@ -99,16 +89,13 @@ def paper_api_queryset(user=None):
                 PaperSummary.objects.filter(paper_id=OuterRef("pk"))
             ),
         )
-        .order_by("-updated_at")
+        .order_by("-published_at", "-created_at")
     )
     if user is not None and getattr(user, "is_authenticated", False):
         queryset = queryset.filter(library_entries__user=user)
     return queryset
 
 
-# -------------------------------------------------------------------------
-# 4. Arxiv 검색 및 논문 CRUD 뷰
-# -------------------------------------------------------------------------
 class ArxivSearchAPIView(APIView):
     """
     Arxiv 논문 검색 API
@@ -167,7 +154,7 @@ class ArxivSearchAPIView(APIView):
 
 class PaperListAPIView(generics.ListCreateAPIView):
     """
-    논문 목록 및 등록 API
+    논문 목록 및 수동 등록 API
     """
     serializer_class = PaperListSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
@@ -184,7 +171,7 @@ class PaperListAPIView(generics.ListCreateAPIView):
 
 class PaperDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
     """
-    논문 상세/수정/삭제 API
+    논문 상세 정보 조회/수정/삭제
     """
     serializer_class = PaperDetailSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
@@ -197,7 +184,7 @@ class PaperDetailAPIView(generics.RetrieveUpdateDestroyAPIView):
 
 class PaperSaveAPIView(APIView):
     """
-    Arxiv 검색 결과 논문 저장 API
+    검색된 논문을 내 서재에 저장
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -237,23 +224,19 @@ class PaperSaveAPIView(APIView):
 
 class PaperSectionsAPIView(generics.ListAPIView):
     """
-    논문 섹션 목록 조회 API
+    특정 논문의 섹션 본문 목록 조회
     """
     serializer_class = PaperSectionSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
 
     def get_queryset(self):
-<<<<<<< HEAD
         arxiv_id = self.kwargs.get("arxiv_id")
         return PaperSection.objects.filter(paper__arxiv_id=arxiv_id).order_by("section_order")
 
 
-# -------------------------------------------------------------------------
-# 5. 요약/번역/질의응답 (RunPod LLM 연동)
-# -------------------------------------------------------------------------
 class PaperSummaryAPIView(generics.RetrieveAPIView):
     """
-    논문 요약 결과 조회 API
+    논문 요약 결과 단일 조회
     """
     serializer_class = PaperSummarySerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
@@ -265,7 +248,7 @@ class PaperSummaryAPIView(generics.RetrieveAPIView):
 
 class PaperSummarizeAPIView(APIView):
     """
-    RunPod LLM 모델 서버(Cloudflare 터널)로 요약 생성 요청
+    RunPod LLM 모델 서버(Cloudflare 터널)를 통한 요약 실행
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -275,7 +258,7 @@ class PaperSummarizeAPIView(APIView):
 
         try:
             payload = {
-                "prompt": f"Summarize the following paper abstract:\n\n{paper.abstract}",
+                "prompt": f"Summarize the following paper abstract in Korean:\n\n{paper.abstract}",
                 "max_tokens": 1024,
             }
             res = requests.post(f"{runpod_url}/generate", json=payload, timeout=60)
@@ -306,7 +289,7 @@ class PaperSummarizeAPIView(APIView):
 
 class PaperTranslationsAPIView(generics.ListAPIView):
     """
-    논문 번역 결과 조회 API (urls.py 매핑용 복수형 s)
+    특정 논문의 번역 목록 조회
     """
     serializer_class = TranslationSerializer
     permission_classes = [permissions.IsAuthenticatedOrReadOnly]
@@ -318,7 +301,7 @@ class PaperTranslationsAPIView(generics.ListAPIView):
 
 class PaperTranslateAPIView(APIView):
     """
-    논문 번역 요청 API
+    논문 번역 요청
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -332,7 +315,7 @@ class PaperTranslateAPIView(APIView):
 
 class PaperQuestionAPIView(APIView):
     """
-    논문 질의응답(RAG) 요청 API
+    논문 질의응답 (RAG) API
     """
     permission_classes = [permissions.IsAuthenticated]
 
@@ -355,18 +338,10 @@ class PaperQuestionAPIView(APIView):
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
-# -------------------------------------------------------------------------
-# 6. 작업 상세 조회 뷰
-# -------------------------------------------------------------------------
 class ProcessingJobDetailAPIView(generics.RetrieveAPIView):
     """
-    비동기 처리 작업 단일 상세 조회 API
+    비동기 처리 작업 단일 상세 조회
     """
     serializer_class = ProcessingJobSerializer
     permission_classes = [permissions.IsAuthenticated]
     queryset = ProcessingJob.objects.select_related("paper")
-=======
-        return ProcessingJob.objects.select_related("paper").filter(
-            paper__library_entries__user=self.request.user
-        )
->>>>>>> 9accb5e2011d05379cae6c5dc39ae2eb53ddd792
