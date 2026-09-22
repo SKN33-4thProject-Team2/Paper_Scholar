@@ -595,22 +595,24 @@ Supervisor / Agent
 
 #### Supervisor 연결
 
-현재 Supervisor 기본 어댑터는 v2가 아닌 도구를 import하고 있다.
+Supervisor 어댑터는 v2 요약·번역 계약을 사용한다.
 
 ```python
-from tools.translation_tool import TranslateTool
-from tools.summary_tool import SummaryTool
+from tools.translate_tool_v2 import TranslateTool
+from agent.summary_agent import SummaryAgent
 ```
 
-최종적으로는 v2 로직을 사용하는 Service를 호출하도록 통일해야 한다.
+LangGraph는 v2 Agent의 입출력을 State 계약으로 변환하고, Django 웹은
+동일한 v2 요약·번역 저장소를 사용한다.
 
 ```text
 Supervisor
- ├─ SummaryService(v2 로직)
- └─ TranslationService(v2 로직)
+ ├─ SummaryAgent(v2 로직)
+ └─ TranslateTool(v2 로직)
 ```
 
-단순히 import 파일명만 `_v2`로 바꾸는 것이 아니라, SQLite 입출력 부분을 Repository로 분리한 뒤 연결해야 한다.
+각 Agent는 독립적으로 호출되며, 번역 요청에서 요약 산출물이 없을 때만
+Supervisor가 요약을 선행 의존성으로 보충한다.
 
 ---
 
@@ -728,4 +730,3 @@ DB_PORT=33062
 5. 채팅 기록과 LangGraph 체크포인트를 어느 단계에서 영구 저장할지
 
 현재 1차 구현은 **논문당 최신 요약 하나 + 요약문 번역 하나**를 기준으로 시작하고, 필요한 경우 이력 관리와 전체 논문 번역을 확장하는 것이 가장 단순하다.
-

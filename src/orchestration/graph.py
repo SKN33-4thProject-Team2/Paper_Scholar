@@ -106,27 +106,12 @@ def build_graph(
         history = list(state.get("node_history", []))
         last_node = history[-1] if history else ""
 
-        if route == "translate" and not state.get("extracted_records"):
-            if last_node == "extract":
-                return {
-                    "route": "finish",
-                    "route_reason": "본문 추출 결과가 없어 번역을 중단",
-                    "remaining_steps": [],
-                    "errors": ["번역에 필요한 본문 추출 결과가 없습니다."],
-                }
-            return {
-                "route": "extract",
-                "route_reason": "번역 입력이 없어 본문 추출을 먼저 실행",
-                "remaining_steps": ["translate", *remaining],
-            }
-
-        if route == "summarize" and not state.get("translated_paths"):
-            if state.get("extracted_records"):
-                return {
-                    "route": "translate",
-                    "route_reason": "요약 입력이 없어 번역을 먼저 실행",
-                    "remaining_steps": ["summarize", *remaining],
-                }
+        # Summary and translation are independent agent capabilities, but
+        # their *artifacts* have a real dependency: v2 first stores a summary
+        # from extracted sections, then translates that summary.  Inject only
+        # a missing prerequisite for the active request; do not run a global
+        # extract→summarize→translate pipeline for every turn.
+        if route == "summarize" and not state.get("extracted_records"):
             if last_node == "extract":
                 return {
                     "route": "finish",
@@ -136,8 +121,28 @@ def build_graph(
                 }
             return {
                 "route": "extract",
-                "route_reason": "요약 입력이 없어 추출·번역 단계를 추가",
-                "remaining_steps": ["translate", "summarize", *remaining],
+                "route_reason": "요약 입력이 없어 본문 추출을 먼저 실행",
+                "remaining_steps": ["summarize", *remaining],
+            }
+
+        if route == "translate" and not state.get("summaries"):
+            if state.get("extracted_records"):
+                return {
+                    "route": "summarize",
+                    "route_reason": "번역할 요약 결과가 없어 요약을 먼저 실행",
+                    "remaining_steps": ["translate", *remaining],
+                }
+            if last_node == "extract":
+                return {
+                    "route": "finish",
+                    "route_reason": "본문 추출 결과가 없어 번역을 중단",
+                    "remaining_steps": [],
+                    "errors": ["번역에 필요한 본문 추출 결과가 없습니다."],
+                }
+            return {
+                "route": "extract",
+                "route_reason": "번역 입력이 없어 본문 추출·요약을 먼저 실행",
+                "remaining_steps": ["summarize", "translate", *remaining],
             }
 
         return {

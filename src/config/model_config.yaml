@@ -31,7 +31,7 @@ keyword:
   max_tokens: 160
   timeout: 25
 
-# services/translation_service.py, tools/translation_tool.py
+# services/translation_service.py, tools/translate_tool_v2.py
 # 번역은 NVIDIA Build API 로 보낸다. 같은 4,000자 조각을 로컬 CPU(translategemma:4b)
 # 는 331.9초, 이쪽은 21.8초에 옮겼다(15배). 번역은 입력만큼 긴 출력을 만들어야 해서
 # GPU 없는 장비에서는 논문 한 편에 20~50분이 걸린다.
@@ -50,7 +50,7 @@ translation:
   retry_backoff_seconds: 2.0
   output_directory: data/paper_translate
 
-# tools/summary_tool.py, services/summary_markdown_store.py
+# tools/summary_tool_v2.py
 # 같은 조각으로 잰 값이다(청크 요약 + 최종 요약, 4단 항목 채움 / 수치 보존).
 #   qwen2.5:3b     96.8초  4/4  4/4   ← 이것
 #   qwen2.5:1.5b   52.5초  4/4  2/4   중국어로 답한다
