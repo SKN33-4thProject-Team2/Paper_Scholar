@@ -132,8 +132,14 @@ export function getPaper(arxivId) {
   return request(`/papers/${encodeURIComponent(arxivId)}/`)
 }
 
-export function getPaperSections(arxivId) {
-  return request(`/papers/${encodeURIComponent(arxivId)}/sections/`)
+function unwrapListResponse(payload) {
+  if (Array.isArray(payload)) return payload
+  return Array.isArray(payload?.results) ? payload.results : []
+}
+
+export async function getPaperSections(arxivId) {
+  const payload = await request(`/papers/${encodeURIComponent(arxivId)}/sections/`)
+  return unwrapListResponse(payload)
 }
 
 export function getPaperSummary(arxivId) {
@@ -148,8 +154,9 @@ export function summarizePaper(arxivId, force = false) {
   })
 }
 
-export function getPaperTranslations(arxivId) {
-  return request(`/papers/${encodeURIComponent(arxivId)}/translations/`)
+export async function getPaperTranslations(arxivId) {
+  const payload = await request(`/papers/${encodeURIComponent(arxivId)}/translations/`)
+  return unwrapListResponse(payload)
 }
 
 export function translatePaper(arxivId, targetLanguage = 'ko', force = false) {

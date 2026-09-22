@@ -69,13 +69,14 @@ function OverviewTab({ paper }) {
 }
 
 function SectionsTab({ sections }) {
-  if (sections.length === 0) {
+  const sectionList = Array.isArray(sections) ? sections : []
+  if (sectionList.length === 0) {
     return <div className="artifact-empty">아직 추출된 본문 섹션이 없습니다.</div>
   }
 
   return (
     <div className="section-list">
-      {sections.map((section) => (
+      {sectionList.map((section) => (
         <section
           className="section-card"
           key={`${section.section_order}-${section.section_title}`}
