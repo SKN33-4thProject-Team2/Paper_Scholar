@@ -1,28 +1,39 @@
-# 가상환경 및 캐시
+# 가상환경 및 로컬 캐시
 .venv
 venv
 ENV/
 __pycache__/
 *.py[cod]
 *$py.class
+.pytest_cache/
 
-# 깃 관련 설정
+# Git 메타데이터
 .git
 .gitignore
 .github
 
-# 보안 및 환경변수
+# 보안 및 로컬 환경 파일
 .env
 *.env
 
-# SQLite 및 로컬 DB 파일
+# SQLite 및 임시 데이터베이스
 *.sqlite3
 *.db
 backend/*.sqlite3
 
-# 대용량 이미지/데이터 폴더
-data/figures/
+# 빌드 캐시를 깨뜨리는 대용량 데이터 및 로그
+data/
+output/
+log/
+*.log
 
-# OS 파일
+# 프론트엔드 모듈 (EC2 백엔드 컨테이너 빌드 시 제외)
+frontend/node_modules/
+frontend/.next/
+frontend/dist/
+
+# 문서 및 시스템 임시 파일
+docs/
+evaluation/
 .DS_Store
 Thumbs.db
