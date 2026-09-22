@@ -41,6 +41,11 @@ load_dotenv(PROJECT_ROOT / ".env")
 
 # SECURITY WARNING: keep the secret key used in production secret!
 # 수정: 환경 변수가 없을 경우 안전한 폴백 키 자동 생성 (배포 에러 방지)
+
+RUNPOD_API_KEY = os.getenv('RUNPOD_API_KEY', '').strip()
+RUNPOD_POD_ID = os.getenv('RUNPOD_POD_ID', '').strip()
+RUNPOD_API_URL = os.getenv('RUNPOD_API_URL', '').strip()
+
 SECRET_KEY = os.environ.get(
     "DJANGO_SECRET_KEY",
     "django-insecure-fallback-key-" + "".join(random.choices("abcdefghijklmnopqrstuvwxyz0123456789", k=20))
@@ -214,3 +219,23 @@ CORS_ALLOWED_ORIGINS = [
     ).split(",")
     if origin.strip()
 ]
+
+# 2. Ollama Base URL 결정 로직 (우선순위: 명시적 URL > POD ID 기반 프록시 URL > 로컬 폴백)
+if RUNPOD_API_URL:
+    # RUNPOD_API_URL이 직접 설정된 경우 우선 적용
+    OLLAMA_BASE_URL = RUNPOD_API_URL.rstrip('/')
+elif RUNPOD_POD_ID:
+    # POD ID가 존재할 경우 RunPod 11434 포트 프록시 주소 자동 조합
+    OLLAMA_BASE_URL = f"https://{RUNPOD_POD_ID}-11434.proxy.runpod.net"
+else:
+    # 환경 변수가 없을 경우 개발용 로컬 주소로 폴백
+    OLLAMA_BASE_URL = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434').rstrip('/')
+
+# 3. 사용할 기본 Ollama 모델 식별자
+OLLAMA_MODEL = os.getenv('OLLAMA_MODEL', 'qwen2.5:3b')
+
+# 4. RunPod 프록시 인증을 위한 HTTP 헤더 딕셔너리 생성
+OLLAMA_HEADERS = {}
+if RUNPOD_API_KEY:
+    # RunPod 프록시 엔드포인트 통과를 위한 Bearer 인증 토큰 주입
+    OLLAMA_HEADERS['Authorization'] = f"Bearer {RUNPOD_API_KEY}"
