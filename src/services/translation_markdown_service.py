@@ -468,3 +468,16 @@ def restore_translation_markup(
     if PROTECTED_TOKEN_PATTERN.search(restored):
         raise TranslationMarkupError("번역 보호 토큰을 완전히 복원하지 못했습니다.")
     return restored
+
+
+def is_protected_markup_only(protection: ProtectedTranslationMarkup) -> bool:
+    """보호 대상 외에 번역할 일반 텍스트가 없는지 확인한다.
+
+    표·수식만으로 이루어진 청크는 모델에 보낼 필요가 없다. 모델이 보호 토큰을
+    변형할 가능성만 늘어나므로, 호출부에서 원문을 그대로 보존할 수 있게 한다.
+    제목이나 설명 문장이 함께 있으면 ``False``를 반환하여 일반 번역을 수행한다.
+    """
+    if not protection.replacements:
+        return False
+    unprotected = PROTECTED_TOKEN_PATTERN.sub("", protection.text)
+    return not unprotected.strip()

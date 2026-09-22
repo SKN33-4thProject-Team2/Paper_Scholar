@@ -6,7 +6,7 @@
     python -m src.tools.translate_tool_v2 --paper-id 1702.01806v2
     python -m src.tools.translate_tool_v2 --export-only
 
-번역 모델은 ``model_config.yaml``의 Gemini 설정을 사용한다.
+번역 모델은 ``model_config.yaml``의 translation 설정을 사용한다.
 """
 
 from __future__ import annotations
@@ -26,6 +26,7 @@ from services.translation_service import TranslateService
 from dotenv import load_dotenv
 
 from services.translation_markdown_service import (
+    is_protected_markup_only,
     protect_translation_markup,
     restore_translation_markup,
     split_markdown,
@@ -59,16 +60,17 @@ Do not add explanations, comments, or code fences.
 [English source content]
 """
 
-    def __init__(self) -> None:
+    def __init__(self, service: TranslateService | None = None) -> None:
         config = load_task_config("translation")
-        self.model = str(config.get("model", "gemini-2.5-flash"))
-        self.chunk_chars = int(config.get("chunk_chars", 700))
-        self.service = TranslateService()
+        self.model = str(config.get("model", ""))
+        self.chunk_chars = int(config.get("chunk_chars", 1500))
+        if self.chunk_chars < 1:
+            raise ValueError("translation.chunk_chars는 1 이상이어야 합니다.")
+        self.service = service or TranslateService()
 
     def translate(self, content: str) -> tuple[str, int]:
         # 긴 요약은 모델 입력 한도와 응답 안정성을 위해 나누어 번역한다.
-        chunk_chars = min(self.chunk_chars, 1500)
-        chunks = split_markdown(content, max_chars=chunk_chars)
+        chunks = split_markdown(content, max_chars=self.chunk_chars)
         translated_chunks: list[str] = []
         for index, chunk in enumerate(chunks, 1):
             logger.log(
@@ -80,10 +82,22 @@ Do not add explanations, comments, or code fences.
             )
             try:
                 protection = protect_translation_markup(chunk)
-                translated = self.service.translate(f"{self.PROMPT}\n{protection.text}")
-                result = restore_translation_markup(translated.strip(), protection)
+                translated_by_model = not is_protected_markup_only(protection)
+                if not translated_by_model:
+                    # 표·수식만 있는 청크는 모델에 보내지 않고 원문을 보존한다.
+                    # 보호 토큰을 모델이 바꿔서 복원에 실패할 가능성도 없어진다.
+                    result = restore_translation_markup(protection.text, protection)
+                else:
+                    translated = self.service.translate(
+                        f"{self.PROMPT}\n{protection.text}"
+                    )
+                    result = restore_translation_markup(translated.strip(), protection)
                 korean_chars = sum("가" <= char <= "힣" for char in result)
-                if korean_chars == 0 and any("A" <= char <= "z" for char in chunk):
+                if (
+                    translated_by_model
+                    and korean_chars == 0
+                    and any("A" <= char <= "z" for char in chunk)
+                ):
                     raise RuntimeError("번역 결과가 한국어가 아닙니다.")
                 translated_chunks.append(result)
             except Exception as exc:
