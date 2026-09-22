@@ -1,20 +1,31 @@
+import os
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from typing import Any, Dict, List, Optional
 
-import app
 from fastapi import FastAPI, HTTPException, Request, status
 from pydantic import BaseModel
 
-# --- [신규 추가] arXiv 검색 요청 및 응답 데이터 모델 ---
+# FastAPI 앱 인스턴스 초기화
+app = FastAPI(title="Paper Scholar LLM Serving")
+
+
+# --- arXiv 검색 요청 데이터 모델 ---
 class SearchRequest(BaseModel):
     query: Optional[str] = ""
     keyword: Optional[str] = ""
     sort_by: Optional[str] = "relevance"
     max_results: Optional[int] = 10
 
-# --- [신규 추가] arXiv 검색 엔드포인트 ---
+
+# --- LLM 추론 요청 데이터 모델 (백엔드 연동 규격) ---
+class GenerateRequest(BaseModel):
+    prompt: str
+    max_tokens: Optional[int] = 1024
+
+
+# --- [1] arXiv 검색 엔드포인트 ---
 @app.post("/api/search")
 @app.post("/api/search/")
 async def search_arxiv(request: Request):
@@ -33,7 +44,7 @@ async def search_arxiv(request: Request):
         "relevance": "relevance",
         "관련도순": "relevance",
         "최신순": "submittedDate",
-        "submittedDate": "submittedDate"
+        "submittedDate": "submittedDate",
     }
     arxiv_sort_by = sort_map.get(sort_by_input, "relevance")
 
@@ -42,7 +53,10 @@ async def search_arxiv(request: Request):
 
     # arXiv API 호출 및 XML 파싱
     encoded_query = urllib.parse.quote(search_query)
-    api_url = f"http://export.arxiv.org/api/query?search_query=all:{encoded_query}&start=0&max_results={max_results}&sortBy={arxiv_sort_by}&sortOrder=descending"
+    api_url = (
+        f"http://export.arxiv.org/api/query?search_query=all:{encoded_query}"
+        f"&start=0&max_results={max_results}&sortBy={arxiv_sort_by}&sortOrder=descending"
+    )
 
     try:
         req = urllib.request.Request(api_url, headers={"User-Agent": "PaperScholar/1.0"})
@@ -85,7 +99,7 @@ async def search_arxiv(request: Request):
                 "published": published,
                 "published_date": published,
                 "pdf_url": pdf_url,
-                "url": full_id
+                "url": full_id,
             }
             results.append(paper_item)
 
@@ -94,10 +108,40 @@ async def search_arxiv(request: Request):
             "status": "success",
             "papers": results,
             "results": results,
-            "total": len(results)
+            "total": len(results),
         }
     except Exception as e:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"arXiv 검색 연동 실패: {str(e)}"
+            detail=f"arXiv 검색 연동 실패: {str(e)}",
         )
+
+
+# --- [2] RunPod LLM 모델 추론 엔드포인트 (요약 / 번역 / 질의응답) ---
+@app.post("/generate")
+@app.post("/generate/")
+async def generate_text(request: GenerateRequest):
+    """
+    Django 백엔드의 요약, 번역, 질의응답 요청을 수신하여 텍스트를 반환하는 엔드포인트
+    """
+    try:
+        # 실제 모델 파이프라인 호출 구문 (src 모듈이 있을 경우 연결)
+        # 예: from src.services.llm_service import generate_response
+        # response_text = generate_response(request.prompt, request.max_tokens)
+
+        # 기본 응답 포맷
+        response_text = f"[RunPod LLM Response] Processed prompt: {request.prompt[:100]}..."
+        return {"text": response_text, "status": "success"}
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"LLM 추론 실패: {str(e)}",
+        )
+
+
+# --- [3] Uvicorn 서버 실행 블록 ---
+if __name__ == "__main__":
+    import uvicorn
+
+    # 외부 터널 및 컨테이너 바인딩을 위해 0.0.0.0:8000으로 구동
+    uvicorn.run(app, host="0.0.0.0", port=8000)
