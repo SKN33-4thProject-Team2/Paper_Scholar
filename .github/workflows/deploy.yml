@@ -90,8 +90,11 @@ jobs:
             sleep 3
             sudo docker exec paper-scholar python manage.py migrate --noinput || true
 
-            echo "[5/6] 미사용 댕글링 이미지만 정리 (빌드 캐시 보존)..."
-            sudo docker image prune -f
+            echo "[5/6] 오래된 댕글링 이미지만 정리 (빌드 캐시 보존)..."
+            # 주의: 조건 없는 prune은 직전 빌드의 중간 레이어까지 지워
+            # 다음 배포에서 torch/requirements를 처음부터 다시 받게 만든다.
+            # 방금 만든 캐시는 남기고 일주일 지난 것만 정리한다.
+            sudo docker image prune -f --filter "until=168h"
 
             echo "[6/6] 프론트엔드 정적 파일 배치..."
             # nginx가 /var/www/paper-scholar 를 서빙하도록 설정돼 있어야 반영된다.

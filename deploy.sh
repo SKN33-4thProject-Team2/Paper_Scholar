@@ -27,8 +27,9 @@ docker run -d \
 
 echo "[4/5] 데이터베이스 마이그레이션 및 찌꺼기 이미지 정리..."
 docker exec "$CONTAINER_NAME" python manage.py migrate --noinput
-# 빌드 캐시는 온전히 유지하고 이름 없는 태그 찌꺼기(dangling)만 정리
-docker image prune -f
+# 조건 없는 prune은 직전 빌드의 중간 레이어까지 지워 다음 배포에서
+# torch/requirements를 처음부터 다시 받게 만든다. 오래된 것만 정리한다.
+docker image prune -f --filter "until=168h"
 
 echo "[5/5] 프론트엔드 빌드 및 배치..."
 # nginx가 /var/www/paper-scholar 를 서빙하도록 설정돼 있어야 반영된다.
