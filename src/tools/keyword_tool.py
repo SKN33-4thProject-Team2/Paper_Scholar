@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import sys
 import time
+from functools import lru_cache
 from pathlib import Path
 from typing import List
 
@@ -73,11 +74,21 @@ class KeywordInput(BaseModel):
 # ---------------------------------------------------------------------
 # 지연 시간 0.5초대, 추론 VRAM 로딩이 없어 즉시 실행됨
 FAST_KEYWORD_MODEL = os.getenv("FAST_KEYWORD_MODEL", "gpt-4o-mini")
-keyword_llm = ChatOpenAI(
-    model=FAST_KEYWORD_MODEL,
-    temperature=0.1,
-    timeout=10.0
-).with_structured_output(ArxivKeywords)
+
+
+@lru_cache(maxsize=1)
+def _get_keyword_llm():
+    """Create the keyword model only when keyword generation is requested.
+
+    Importing this module is part of the paper save path, which does not need an
+    OpenAI client. Delaying construction keeps Django startup and non-LLM tasks
+    usable when credentials are intentionally unavailable.
+    """
+    return ChatOpenAI(
+        model=FAST_KEYWORD_MODEL,
+        temperature=0.1,
+        timeout=10.0
+    ).with_structured_output(ArxivKeywords)
 
 
 @tool("generate_arxiv_keywords", args_schema=KeywordInput)
@@ -105,7 +116,7 @@ def generate_arxiv_keywords(user_query: str) -> dict:
 
     try:
         # gpt-4o-mini 기반 고속 구조화 출력
-        result: ArxivKeywords = keyword_llm.invoke(prompt)
+        result: ArxivKeywords = _get_keyword_llm().invoke(prompt)
         extracted_keywords = result.keywords[:4]  # 429 방어를 위해 최대 4개로 제한
 
         elapsed = round(time.time() - start_time, 2)

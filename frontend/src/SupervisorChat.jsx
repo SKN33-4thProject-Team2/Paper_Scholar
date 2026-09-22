@@ -1,25 +1,55 @@
 import { useState } from 'react'
-import { getSupervisorRun, startSupervisorRun } from './api'
+import {
+  createSupervisorPlan,
+  getProcessingJob,
+  savePapers,
+  searchArxiv,
+  summarizePaper,
+  translatePaper,
+} from './api'
 
-// 실행은 백엔드의 LangGraph Supervisor가 전부 담당한다. 화면은 요청을 한 번
-// 보내고 상태만 폴링하며, 어떤 기능을 쓸지는 그래프가 결정한다.
-const TERMINAL_STATUSES = new Set(['completed', 'failed', 'needs_input'])
 
-const NODE_LABELS = {
-  keyword: '검색 키워드 생성',
-  search: 'arXiv 논문 검색',
-  library: '내 서재 조회',
-  download: '논문 저장·다운로드',
+const ACTION_LABELS = {
+  search: '논문 검색',
+  save: '내 서재 저장',
   extract: '본문 추출',
   summarize: '요약 생성',
   translate: '한국어 번역',
-  deep_search: '본문 근거 검색',
-  deep_research: '근거 기반 답변',
-  human: '추가 정보 요청',
 }
+
+const TERMINAL_JOB_STATUSES = new Set(['completed', 'failed'])
 
 function wait(milliseconds) {
   return new Promise((resolve) => window.setTimeout(resolve, milliseconds))
+}
+
+async function waitForJob(initialJob, onUpdate) {
+  let job = initialJob
+  onUpdate?.(job)
+  for (let attempt = 0; attempt < 900; attempt += 1) {
+    if (TERMINAL_JOB_STATUSES.has(job.status)) return job
+    await wait(2000)
+    job = await getProcessingJob(job.id)
+    onUpdate?.(job)
+  }
+  throw new Error(`${initialJob.arxiv_id} 작업 확인 시간이 초과되었습니다.`)
+}
+
+async function runJobs(starters, onProgress) {
+  const startedJobs = await Promise.all(starters.map((start) => start()))
+  const results = await Promise.all(startedJobs.map((started, index) => (
+    waitForJob(started.job, (job) => {
+      onProgress?.(index, starters.length, job)
+    })
+  )))
+  results.forEach((completed) => {
+    if (completed.status === 'failed') {
+      throw new Error(
+        `${completed.arxiv_id} 작업 실패: ${completed.error_message || '원인을 확인할 수 없습니다.'}`,
+      )
+    }
+  })
+  return results
 }
 
 function PaperResults({ papers }) {
@@ -27,9 +57,9 @@ function PaperResults({ papers }) {
   return (
     <ol className="supervisor-papers">
       {papers.map((paper) => (
-        <li key={paper.arxiv_id || paper.title}>
+        <li key={paper.arxiv_id}>
           <strong>{paper.title}</strong>
-          {paper.arxiv_id && <span>arXiv:{paper.arxiv_id}</span>}
+          <span>arXiv:{paper.arxiv_id}</span>
         </li>
       ))}
     </ol>
@@ -40,8 +70,6 @@ export default function SupervisorChat({ onSaved }) {
   const [message, setMessage] = useState('')
   const [messages, setMessages] = useState([])
   const [working, setWorking] = useState(false)
-  // 같은 thread_id로 이어 보내면 그래프가 직전 턴의 선택 논문을 기억한다.
-  const [threadId, setThreadId] = useState('')
 
   const addAssistant = (payload) => {
     const id = window.crypto.randomUUID()
@@ -60,49 +88,115 @@ export default function SupervisorChat({ onSaved }) {
     const cleanMessage = message.trim()
     if (!cleanMessage || working) return
 
-    setMessages((current) => [...current, {
+    const userMessage = {
       id: window.crypto.randomUUID(),
       role: 'user',
       text: cleanMessage,
-    }])
+    }
+    setMessages((current) => [...current, userMessage])
     setMessage('')
     setWorking(true)
     const assistantId = addAssistant({ text: '요청을 분석하고 있습니다.', status: 'running' })
 
     try {
-      let run = await startSupervisorRun(cleanMessage, threadId)
-      if (run.thread_id) setThreadId(run.thread_id)
-
-      const planSteps = (run.plan || []).map((step) => step.name || step.action)
-      updateAssistant(assistantId, {
-        text: run.status === 'needs_input'
-          ? run.response
-          : '실행 계획을 세웠습니다. 필요한 기능만 순서대로 실행합니다.',
-        status: run.status === 'needs_input' ? 'completed' : 'running',
-        plan: planSteps,
-      })
-
-      let guard = 0
-      while (!TERMINAL_STATUSES.has(run.status) && guard < 900) {
-        guard += 1
-        await wait(2000)
-        run = await getSupervisorRun(run.id)
-        const done = (run.node_history || []).map((node) => NODE_LABELS[node] || node)
+      const plan = await createSupervisorPlan(cleanMessage)
+      if (plan.needs_clarification) {
         updateAssistant(assistantId, {
-          progress: done.length ? `진행: ${done.join(' → ')}` : '실행을 준비하고 있습니다.',
+          text: plan.clarification_question,
+          status: 'completed',
+          plan,
         })
+        return
       }
 
-      if (run.status === 'failed') {
-        throw new Error(run.error_message || '요청을 완료하지 못했습니다.')
+      updateAssistant(assistantId, {
+        text: `‘${plan.query}’ 주제로 실행 계획을 만들었습니다.`,
+        status: 'running',
+        plan,
+        progress: `논문 ${plan.max_results}편을 검색하는 중입니다.`,
+      })
+      const searchResponse = await searchArxiv({
+        query: plan.query,
+        max_results: plan.max_results,
+        sort_by: 'r',
+      })
+      const papers = searchResponse.results || []
+      if (papers.length === 0) {
+        updateAssistant(assistantId, {
+          text: `‘${plan.query}’ 검색 결과가 없습니다. 다른 주제로 요청해 주세요.`,
+          status: 'completed',
+          plan,
+          papers: [],
+          progress: '',
+        })
+        return
+      }
+
+      if (!plan.save_to_library) {
+        updateAssistant(assistantId, {
+          text: `${papers.length}편을 찾았습니다. 저장이나 요약·번역이 필요하면 이어서 요청해 주세요.`,
+          status: 'completed',
+          plan,
+          papers,
+          progress: '',
+        })
+        return
+      }
+
+      updateAssistant(assistantId, {
+        papers,
+        progress: `${papers.length}편을 내 서재에 저장하고 있습니다.`,
+      })
+      const saveResponse = await savePapers(papers, plan.extract_content)
+      onSaved?.()
+
+      let availablePaperIds = papers.map((paper) => paper.arxiv_id)
+      if (plan.extract_content) {
+        const extractionJobs = saveResponse.jobs || []
+        const extractionResults = await Promise.all(extractionJobs.map((job, index) => (
+          waitForJob(job, (currentJob) => {
+            updateAssistant(assistantId, {
+              progress: `본문 추출 ${index + 1}/${extractionJobs.length}: ${currentJob.status}`,
+            })
+          })
+        )))
+        const failed = extractionResults.filter((job) => job.status === 'failed')
+        if (failed.length > 0) {
+          throw new Error(
+            failed.map((job) => `${job.arxiv_id}: ${job.error_message}`).join(' | '),
+          )
+        }
+        availablePaperIds = extractionResults.map((job) => job.arxiv_id)
+      }
+
+      if (plan.summarize) {
+        updateAssistant(assistantId, { progress: '논문 요약 작업을 시작합니다.' })
+        await runJobs(
+          availablePaperIds.map((arxivId) => () => summarizePaper(arxivId, false)),
+          (index, total, job) => updateAssistant(assistantId, {
+            progress: `요약 ${index + 1}/${total}: ${job.status}`,
+          }),
+        )
+      }
+
+      if (plan.translate) {
+        updateAssistant(assistantId, { progress: '요약 한국어 번역을 시작합니다.' })
+        await runJobs(
+          availablePaperIds.map((arxivId) => (
+            () => translatePaper(arxivId, plan.target_language, false)
+          )),
+          (index, total, job) => updateAssistant(assistantId, {
+            progress: `번역 ${index + 1}/${total}: ${job.status}`,
+          }),
+        )
       }
 
       onSaved?.()
       updateAssistant(assistantId, {
-        text: run.response || '요청을 처리했지만 반환할 결과가 없습니다.',
+        text: `${papers.length}편에 대한 요청을 완료했습니다. 내 서재에서 결과를 확인할 수 있습니다.`,
         status: 'completed',
-        plan: (run.node_history || []).map((node) => NODE_LABELS[node] || node),
-        papers: run.papers,
+        plan,
+        papers,
         progress: '',
       })
     } catch (error) {
@@ -122,15 +216,14 @@ export default function SupervisorChat({ onSaved }) {
         <span className="eyebrow">Supervisor</span>
         <h2>논문 작업을 한 문장으로 요청하세요</h2>
         <p>
-          LangGraph Supervisor가 요청을 읽고 검색·저장·본문 추출·요약·번역·근거 검색 중
-          필요한 기능만 골라 실행합니다.
+          Supervisor는 계획만 세우고, 실제 작업은 기존 검색·저장·본문 추출·요약·번역 기능으로 실행합니다.
         </p>
       </header>
 
       <div className="supervisor-chat__messages" aria-live="polite">
         {messages.length === 0 && (
           <div className="supervisor-chat__empty">
-            예: “RAG 논문 3편 찾아서 요약하고 번역해줘.”
+            예: “RAG 논문 하나와 비슷한 논문 3편을 찾아서 요약·번역하고 내 서재에 저장해줘.”
           </div>
         )}
         {messages.map((item) => (
@@ -140,10 +233,10 @@ export default function SupervisorChat({ onSaved }) {
           >
             <span>{item.role === 'user' ? '나' : 'Supervisor'}</span>
             <p>{item.text}</p>
-            {item.plan?.length > 0 && (
+            {item.plan?.actions?.length > 0 && (
               <div className="supervisor-plan">
-                {item.plan.map((label, index) => (
-                  <span key={`${item.id}-${index}-${label}`}>{label}</span>
+                {item.plan.actions.map((action) => (
+                  <span key={action}>{ACTION_LABELS[action] || action}</span>
                 ))}
               </div>
             )}
@@ -151,7 +244,7 @@ export default function SupervisorChat({ onSaved }) {
             <PaperResults papers={item.papers} />
           </article>
         ))}
-        {working && <div className="supervisor-chat__working">Supervisor가 필요한 기능을 실행 중입니다.</div>}
+        {working && <div className="supervisor-chat__working">기존 기능을 순서대로 실행 중입니다.</div>}
       </div>
 
       <form className="supervisor-chat__form" onSubmit={submit}>

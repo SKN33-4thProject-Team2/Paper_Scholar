@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useState } from 'react'
-import { useLocation, useNavigate } from 'react-router-dom'
 import { getHealth, getPaper, getPapers } from './api'
 import PaperDetail from './PaperDetail'
 import SearchPanel from './SearchPanel'
@@ -241,45 +240,19 @@ function PaperContextPanel({ activeView, selectedPaper, paperPage, health, open,
   )
 }
 
-// 화면을 주소로 다룬다. 새로고침·뒤로가기·링크 공유가 모두 동작한다.
-const VIEW_TO_PATH = {
-  library: '/library',
-  search: '/search',
-  translations: '/translations',
-  supervisor: '/deep-search',
-}
-
-function deriveView(pathname) {
-  if (pathname.startsWith('/search')) return 'search'
-  if (pathname.startsWith('/translations')) return 'translations'
-  if (pathname.startsWith('/deep-search')) return 'supervisor'
-  return 'library'
-}
-
-function derivePaperId(pathname) {
-  const matched = pathname.match(/^\/papers\/(.+?)\/?$/)
-  return matched ? decodeURIComponent(matched[1]) : null
-}
-
 function App() {
   const { user, loading: authLoading, logout } = useAuth()
-  const location = useLocation()
-  const navigate = useNavigate()
-  const activeView = deriveView(location.pathname)
-  const selectedId = derivePaperId(location.pathname)
+  const [activeView, setActiveView] = useState('library')
   const [health, setHealth] = useState('checking')
   const [paperPage, setPaperPage] = useState(null)
   const [loadedUserId, setLoadedUserId] = useState(null)
-  const [loadedPaper, setLoadedPaper] = useState(null)
+  const [selectedId, setSelectedId] = useState(null)
+  const [selectedPaper, setSelectedPaper] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [detailLoading, setDetailLoading] = useState(false)
   const [error, setError] = useState('')
   const [navOpen, setNavOpen] = useState(false)
   const [contextOpen, setContextOpen] = useState(false)
-
-  const selectedPaper =
-    selectedId && loadedPaper?.arxiv_id === selectedId ? loadedPaper : null
-  // 주소에 논문이 있는데 아직 그 논문을 못 받았으면 상세는 불러오는 중이다.
-  const detailLoading = Boolean(selectedId) && !selectedPaper && !error
 
   const loadPapers = useCallback(async (url) => {
     setLoading(true)
@@ -327,37 +300,8 @@ function App() {
     return () => window.removeEventListener('keydown', closeOnEscape)
   }, [])
 
-  useEffect(() => {
-    if (!selectedId) return undefined
-    let cancelled = false
-    getPaper(selectedId)
-      .then((paper) => {
-        if (!cancelled) setLoadedPaper(paper)
-      })
-      .catch((requestError) => {
-        if (!cancelled) {
-          setError(requestError.message)
-          setLoadedPaper(null)
-        }
-      })
-    return () => {
-      cancelled = true
-    }
-  }, [selectedId])
-
-  useEffect(() => {
-    if (authLoading) return
-    if (!user && location.pathname !== '/login') {
-      navigate('/login', { replace: true, state: { from: location.pathname } })
-      return
-    }
-    if (user && (location.pathname === '/login' || location.pathname === '/')) {
-      navigate(location.state?.from || '/library', { replace: true })
-    }
-  }, [authLoading, user, location, navigate])
-
   const changeView = (view) => {
-    navigate(VIEW_TO_PATH[view] || '/library')
+    setActiveView(view)
     setNavOpen(false)
     setContextOpen(false)
   }
@@ -371,11 +315,40 @@ function App() {
   }
   const [pageTitle, pageDescription] = pageTitles[activeView]
 
-  const selectPaper = (arxivId) => {
+  const selectPaper = async (arxivId) => {
+    setSelectedId(arxivId)
+    setDetailLoading(true)
     setError('')
-    navigate(`/papers/${encodeURIComponent(arxivId)}`)
-    setContextOpen(false)
+    try {
+      setSelectedPaper(await getPaper(arxivId))
+    } catch (requestError) {
+      setError(requestError.message)
+      setSelectedPaper(null)
+    } finally {
+      setDetailLoading(false)
+    }
   }
+
+  const refreshPaper = useCallback(async (arxivId) => {
+    try {
+      const updatedPaper = await getPaper(arxivId)
+      setSelectedPaper((current) => (
+        current?.arxiv_id === arxivId ? updatedPaper : current
+      ))
+      setPaperPage((current) => (
+        current
+          ? {
+              ...current,
+              results: (current.results || []).map((paper) => (
+                paper.arxiv_id === arxivId ? updatedPaper : paper
+              )),
+            }
+          : current
+      ))
+    } catch (requestError) {
+      setError(requestError.message)
+    }
+  }, [])
 
   if (authLoading) {
     return <div className="auth-loading">로그인 정보를 확인하는 중입니다.</div>
@@ -471,6 +444,7 @@ function App() {
               key={selectedPaper?.arxiv_id || 'empty'}
               paper={selectedPaper}
               loading={detailLoading}
+              onPaperUpdated={refreshPaper}
             />
           </section>
           </div>
