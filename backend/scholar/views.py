@@ -1,5 +1,6 @@
 import logging
 import os
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 import requests
@@ -160,22 +161,64 @@ class ArxivSearchAPIView(APIView):
         query = serializer.validated_data["query"]
         max_results = serializer.validated_data.get("max_results", 10)
 
-        search_url = f"http://export.arxiv.org/api/query?search_query=all:{query}&start=0&max_results={max_results}"
+        # 1. 쿼리 파라미터 정제 및 URL 인코딩
+        clean_query = query.strip()
+        encoded_query = urllib.parse.quote(clean_query)
+        search_url = (
+            "https://export.arxiv.org/api/query"
+            f"?search_query=all:{encoded_query}&start=0&max_results={max_results}"
+        )
+
+        # arXiv 는 기본 Python User-Agent 를 406 으로 거부한다.
+        headers = {
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+                "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 PaperScholar/1.0"
+            )
+        }
+
+        def empty(message: str, error: str = "") -> Response:
+            """실패해도 프론트가 읽는 키를 모두 채워 200 으로 돌려준다."""
+            payload = {
+                "status": "error" if error else "success",
+                "query": clean_query,
+                "count": 0,
+                "total": 0,
+                "papers": [],
+                "results": [],
+                "message": message,
+            }
+            if error:
+                payload["error"] = error
+            return Response(payload, status=status.HTTP_200_OK)
+
         try:
-            with urllib.request.urlopen(search_url, timeout=10) as response:
-                xml_data = response.read()
-            root = ET.fromstring(xml_data)
+            # arXiv 가 느릴 때 몇 분까지 걸리는 경우가 있어 넉넉히 기다린다.
+            resp = requests.get(search_url, headers=headers, timeout=30)
+
+            if resp.status_code != 200:
+                logger.warning(f"arXiv API 응답 비정상 (Status: {resp.status_code})")
+                return empty("검색 결과가 없거나 외부 통신이 원활하지 않습니다.")
+
+            root = ET.fromstring(resp.content)
             ns = {"atom": "http://www.w3.org/2005/Atom"}
 
             results = []
             for entry in root.findall("atom:entry", ns):
-                raw_id = entry.find("atom:id", ns).text
-                arxiv_id = raw_id.split("/abs/")[-1]
-                title = entry.find("atom:title", ns).text.strip().replace("\n", " ")
-                abstract = entry.find("atom:summary", ns).text.strip().replace("\n", " ")
+                raw_id_elem = entry.find("atom:id", ns)
+                raw_id = raw_id_elem.text.strip() if raw_id_elem is not None else ""
+                arxiv_id = raw_id.split("/abs/")[-1] if "/abs/" in raw_id else raw_id
+
+                title_elem = entry.find("atom:title", ns)
+                title = " ".join(title_elem.text.split()) if title_elem is not None else "No Title"
+
+                summary_elem = entry.find("atom:summary", ns)
+                abstract = " ".join(summary_elem.text.split()) if summary_elem is not None else ""
+
                 authors = [
-                    author.find("atom:name", ns).text
+                    author.find("atom:name", ns).text.strip()
                     for author in entry.findall("atom:author", ns)
+                    if author.find("atom:name", ns) is not None
                 ]
 
                 pdf_url = ""
@@ -186,22 +229,34 @@ class ArxivSearchAPIView(APIView):
 
                 results.append(
                     {
+                        "id": arxiv_id,
                         "arxiv_id": arxiv_id,
                         "title": title,
                         "authors": authors,
                         "abstract": abstract,
+                        "summary": abstract,
                         "pdf_url": pdf_url,
+                        "url": raw_id,
                     }
                 )
 
-            res_serializer = ArxivSearchResultSerializer(results, many=True)
-            return Response(res_serializer.data, status=status.HTTP_200_OK)
+            # 프론트는 query·count·results 를 읽는다. papers·total 은 호환용으로 함께 둔다.
+            return Response(
+                {
+                    "status": "success",
+                    "query": clean_query,
+                    "count": len(results),
+                    "total": len(results),
+                    "papers": results,
+                    "results": results,
+                },
+                status=status.HTTP_200_OK,
+            )
+
         except Exception as e:
             logger.error(f"Arxiv search error: {e}")
-            return Response(
-                {"error": "Failed to search Arxiv"},
-                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            )
+            # 실패해도 200 을 주어 프론트의 results.length 가 터지지 않게 한다.
+            return empty("검색 중 오류가 발생했습니다.", error=str(e))
 
 
 class PaperListAPIView(generics.ListCreateAPIView):
