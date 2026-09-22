@@ -301,17 +301,57 @@ class PaperTranslationsAPIView(generics.ListAPIView):
 
 class PaperTranslateAPIView(APIView):
     """
-    논문 번역 요청
+    논문 한국어 번역 요청 API (RunPod LLM 모델 서버 연동)
     """
     permission_classes = [permissions.IsAuthenticated]
 
     def post(self, request, arxiv_id, *args, **kwargs):
         paper = get_object_or_404(Paper, arxiv_id=arxiv_id)
-        return Response(
-            {"status": "success", "message": "Translation requested"},
-            status=status.HTTP_200_OK,
-        )
+        runpod_url = os.getenv("RUNPOD_API_URL", "https://llm.skn33-project.store").rstrip("/")
 
+        # 초록 또는 본문 텍스트 번역 프롬프트
+        source_text = paper.abstract or paper.title
+        prompt = f"Translate the following academic paper abstract into natural Korean:\n\n{source_text}"
+
+        try:
+            payload = {
+                "prompt": prompt,
+                "max_tokens": 1024,
+            }
+            res = requests.post(f"{runpod_url}/generate", json=payload, timeout=60)
+
+            if res.status_code == 200:
+                translated_text = res.json().get("text", res.text)
+            else:
+                translated_text = f"Translation error ({res.status_code}): {res.text[:200]}"
+
+            # Translation 테이블에 결과 기록
+            translation, _ = Translation.objects.update_or_create(
+                paper=paper,
+                translation_type="abstract",
+                target_language="ko",
+                defaults={
+                    "source_language": "en",
+                    "source_text": source_text,
+                    "translated_text": translated_text,
+                    "model_name": "runpod-llm",
+                },
+            )
+
+            return Response(
+                {
+                    "status": "success",
+                    "message": "Translation completed",
+                    "translated_text": translation.translated_text,
+                },
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            logger.error(f"RunPod translation failed: {e}")
+            return Response(
+                {"error": f"Failed to translate from RunPod: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
 
 class PaperQuestionAPIView(APIView):
     """
