@@ -106,16 +106,18 @@ WSGI_APPLICATION = 'django_config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
+# settings.py 내 DATABASES 설정 부분 확인 및 보정
 DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.mysql",
-        "NAME": os.getenv("DB_NAME", "paper_scholar"),
-        "USER": os.getenv("DB_USER", "root"),
-        "PASSWORD": os.getenv("DB_PASSWORD", ""),
-        "HOST": os.getenv("DB_HOST", "localhost"),
-        "PORT": os.getenv("DB_PORT", "3306"),
-        "OPTIONS": {
-            "charset": "utf8mb4",
+    'default': {
+        'ENGINE': 'django.db.backends.mysql',
+        'NAME': os.getenv('DB_NAME', 'paper_scholar'),
+        'USER': os.getenv('DB_USER', 'root'),
+        'PASSWORD': os.getenv('DB_PASSWORD', ''),
+        'HOST': os.getenv('DB_HOST', 'skn33.iptime.org'),
+        'PORT': int(os.getenv('DB_PORT', 33062)),  # 반드시 int로 캐스팅
+        'OPTIONS': {
+            'charset': 'utf8mb4',
+            'connect_timeout': 10,
         },
     }
 }

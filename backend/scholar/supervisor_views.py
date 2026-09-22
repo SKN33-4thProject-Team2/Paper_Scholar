@@ -1,32 +1,55 @@
-from rest_framework import status
-from rest_framework.permissions import IsAuthenticated
+import logging
+from rest_framework import permissions, status
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from .supervisor_serializers import SupervisorCommandSerializer
-from .supervisor_service import SupervisorPlanner
+from scholar.supervisor_serializers import SupervisorPlanRequestSerializer
+from scholar.supervisor_service import generate_supervisor_plan
+
+logger = logging.getLogger(__name__)
 
 
 class SupervisorPlanAPIView(APIView):
-    """Translate one chat command into calls to the existing feature APIs."""
+    """
+    논문 DeepSearch 및 다단계 실행 계획(Supervisor Plan) API
+    GET / POST 두 방식 모두 완벽히 지원
+    """
+    permission_classes = [permissions.AllowAny]
 
-    permission_classes = [IsAuthenticated]
+    def get(self, request, *args, **kwargs):
+        # 프론트엔드 GET 쿼리스트링 파라미터 처리
+        query = request.query_params.get("query", "")
+        mode = request.query_params.get("mode", "deep")
 
-    def post(self, request):
-        request_serializer = SupervisorCommandSerializer(data=request.data)
-        request_serializer.is_valid(raise_exception=True)
-        try:
-            plan = SupervisorPlanner().plan(
-                request_serializer.validated_data["message"]
-            )
-        except ValueError as exc:
+        if not query:
             return Response(
-                {"detail": str(exc)},
+                {"error": "query 파라미터가 필요합니다."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
-        except Exception as exc:
+
+        try:
+            plan = generate_supervisor_plan(query=query, mode=mode)
+            return Response(plan, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Supervisor plan generation failed: {e}")
             return Response(
-                {"detail": f"Supervisor가 요청을 해석하지 못했습니다: {exc}"},
-                status=status.HTTP_502_BAD_GATEWAY,
+                {"error": f"Failed to generate plan: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-        return Response(plan.model_dump())
+
+    def post(self, request, *args, **kwargs):
+        # POST JSON 바디 처리
+        serializer = SupervisorPlanRequestSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        query = serializer.validated_data["query"]
+        mode = serializer.validated_data.get("mode", "deep")
+
+        try:
+            plan = generate_supervisor_plan(query=query, mode=mode)
+            return Response(plan, status=status.HTTP_200_OK)
+        except Exception as e:
+            logger.error(f"Supervisor plan generation failed: {e}")
+            return Response(
+                {"error": f"Failed to generate plan: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
