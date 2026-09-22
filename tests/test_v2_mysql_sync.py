@@ -8,11 +8,7 @@ from unittest.mock import Mock
 
 from tests import SRC_DIR  # noqa: F401 - src 경로를 sys.path에 등록한다.
 
-from tools.summary_tool_v2 import (
-    SummaryTool,
-    protect_markup,
-    restore_selected_markup,
-)
+from tools.summary_tool_v2 import SummaryTool
 from tools.translate_tool_v2 import TranslateTool
 
 
@@ -24,40 +20,6 @@ class RecordingTranslator:
 
 
 class V2MySQLSyncTest(unittest.TestCase):
-    def test_summary_can_omit_unimportant_formula(self) -> None:
-        protection = protect_markup("Result text. $x = y$ Additional detail.")
-
-        restored = restore_selected_markup("Result text.", protection)
-
-        self.assertEqual(restored, "Result text.")
-
-    def test_summary_restores_only_selected_formula(self) -> None:
-        protection = protect_markup("First $x = y$ and second $z = 1$.")
-        selected_token = protection.order[1]
-
-        restored = restore_selected_markup(
-            f"The important equation is {selected_token}.",
-            protection,
-        )
-
-        self.assertIn("$z = 1$", restored)
-        self.assertNotIn("$x = y$", restored)
-
-    def test_summary_drops_unrenderable_tex_diagram_line(self) -> None:
-        protection = protect_markup(
-            "Method. $\\begin{matrix}\\lx@xy@svg{diagram}\\end{matrix}$ Result."
-        )
-        token = protection.order[0]
-
-        restored = restore_selected_markup(
-            f"## Method\n- Diagram artifact: {token}\n\n## Conclusion\nUseful result.",
-            protection,
-        )
-
-        self.assertNotIn("lx@xy", restored)
-        self.assertNotIn("Diagram artifact", restored)
-        self.assertIn("Useful result.", restored)
-
     def test_summary_single_call_syncs_final_result(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

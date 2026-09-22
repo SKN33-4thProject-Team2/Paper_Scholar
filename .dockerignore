@@ -24,6 +24,7 @@ backend/*.sqlite3
 # 빌드 캐시를 깨뜨리는 대용량 데이터 및 로그
 data/
 output/
+log/
 *.log
 
 # 프론트엔드 모듈 (EC2 백엔드 컨테이너 빌드 시 제외)

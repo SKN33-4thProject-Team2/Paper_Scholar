@@ -21,12 +21,9 @@ from dotenv import load_dotenv
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 PROJECT_ROOT = BASE_DIR.parent
-SRC_DIR = PROJECT_ROOT / "src"
 
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
-if str(SRC_DIR) not in sys.path:
-    sys.path.insert(0, str(SRC_DIR))
 
 # LangGraph Supervisor(src/orchestration)는 내부에서 `from orchestration...`,
 # `from tools...` 형태로 형제 모듈을 부르므로 src/ 자체도 import 루트로 등록한다.
@@ -181,14 +178,12 @@ REST_FRAMEWORK = {
         'rest_framework.renderers.JSONRenderer',
     ],
     'DEFAULT_AUTHENTICATION_CLASSES': [
-        # 인증되지 않은 API 요청은 401을 반환하되, browsable API의 세션 로그인과
-        # Basic 인증도 계속 지원한다.
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
-        'rest_framework.authentication.SessionAuthentication',
+        'rest_framework.authentication.SessionAuthentication',      # 브라우저 UI 세션 로그인용 추가
         'rest_framework.authentication.BasicAuthentication',
+        'rest_framework_simplejwt.authentication.JWTAuthentication',# 기존 API용 유지
     ],
     'DEFAULT_PERMISSION_CLASSES': [
-        'rest_framework.permissions.IsAuthenticated',
+        'rest_framework.permissions.AllowAny',                      # 비로그인 브라우저 화면 조회 허용으로 변경
     ],
     # 프론트가 {count, results} 모양을 기대한다. 이 설정이 빠지면 목록이
     # 맨 배열로 나가고, 화면에서 results 를 읽다가 터진다.

@@ -51,18 +51,6 @@ class PaperListSerializer(serializers.ModelSerializer):
     section_count = serializers.IntegerField(source="api_section_count", read_only=True)
     translation_count = serializers.IntegerField(source="api_translation_count", read_only=True)
     has_summary = serializers.BooleanField(source="api_has_summary", read_only=True)
-    latest_extraction_job = serializers.SerializerMethodField()
-
-    def get_latest_extraction_job(self, paper):
-        request = self.context.get("request")
-        if request is None or not request.user.is_authenticated:
-            return None
-
-        job = paper.processing_jobs.filter(
-            user=request.user,
-            job_type=ProcessingJob.JobType.EXTRACT,
-        ).first()
-        return ProcessingJobSerializer(job).data if job is not None else None
 
     class Meta:
         model = Paper
@@ -78,7 +66,6 @@ class PaperListSerializer(serializers.ModelSerializer):
             "section_count",
             "translation_count",
             "has_summary",
-            "latest_extraction_job",
         )
 
 

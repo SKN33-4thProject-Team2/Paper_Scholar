@@ -5,83 +5,110 @@ from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
 
-from .supervisor_service import SupervisorPlan, SupervisorPlanner
+from .models import SupervisorRun
+from .supervisor_service import build_plan
 
 
-User = get_user_model()
+class SupervisorPlanServiceTest(APITestCase):
+    """계획 수립은 LangGraph Supervisor 라우팅이 담당한다."""
 
+    def test_multi_stage_request_plans_every_needed_agent(self):
+        plan = build_plan("RAG 논문 3편 찾아서 요약하고 번역해줘")
 
-class SupervisorPlannerTest(APITestCase):
-    def test_fallback_builds_existing_feature_pipeline(self):
-        planner = SupervisorPlanner(llm=object())
-
-        plan = planner.plan(
-            "RAG 논문 하나와 비슷한 논문 3개도 찾아서 번역 요약하고 내서재에 저장해줘"
-        )
-
-        self.assertEqual(plan.query, "RAG")
-        self.assertEqual(plan.max_results, 4)
-        self.assertEqual(plan.related_count, 3)
+        self.assertFalse(plan["needs_clarification"])
         self.assertEqual(
-            plan.actions,
-            ["search", "save", "extract", "summarize", "translate"],
+            plan["actions"],
+            ["keyword", "search", "download", "summarize", "translate"],
         )
+        self.assertEqual(plan["steps"][0]["name"], "검색 키워드 생성")
 
-    def test_ambiguous_topic_requests_clarification(self):
-        planner = SupervisorPlanner(llm=object())
+    def test_search_and_save_request_includes_download(self):
+        plan = build_plan("논문 3편 찾아서 저장해줘")
 
-        plan = planner.plan("무슨 논문 조회하고 비슷한 것 3개도 저장해줘")
+        self.assertIn("download", plan["actions"])
 
-        self.assertTrue(plan.needs_clarification)
-        self.assertIn("어떤 주제", plan.clarification_question)
+    def test_ambiguous_request_asks_back_instead_of_running(self):
+        plan = build_plan("요약해줘")
+
+        self.assertTrue(plan["needs_clarification"])
+        self.assertEqual(plan["actions"], ["human"])
+        self.assertTrue(plan["clarification_question"])
 
 
 class SupervisorPlanAPITest(APITestCase):
-    def setUp(self):
-        self.user = User.objects.create_user(
-            username="supervisor-user",
-            password="StrongPass!2468",
-        )
-        self.url = reverse("scholar:supervisor-plan")
-
-    def test_authentication_is_required(self):
-        response = self.client.post(self.url, {"message": "RAG 논문 찾아줘"})
-
-        self.assertEqual(response.status_code, status.HTTP_401_UNAUTHORIZED)
-
-    def test_blank_or_one_character_message_is_rejected(self):
-        self.client.force_authenticate(self.user)
-
-        for message in ("", "R"):
-            with self.subTest(message=message):
-                response = self.client.post(
-                    self.url,
-                    {"message": message},
-                    format="json",
-                )
-
-                self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
-
-    @patch("scholar.supervisor_views.SupervisorPlanner.plan")
-    def test_authenticated_user_receives_validated_plan(self, plan_mock):
-        plan_mock.return_value = SupervisorPlan(
-            query="retrieval augmented generation",
-            max_results=4,
-            related_count=3,
-            actions=["search", "save", "extract", "summarize", "translate"],
-            save_to_library=True,
-            extract_content=True,
-            summarize=True,
-            translate=True,
-        )
-        self.client.force_authenticate(self.user)
-
+    def test_plan_endpoint_returns_routed_actions(self):
         response = self.client.post(
-            self.url,
-            {"message": "RAG 논문과 비슷한 논문 3개를 요약 번역해서 저장해줘"},
+            reverse("scholar:supervisor-plan"),
+            {"query": "RAG 논문 3편 찾아서 요약하고 번역해줘"},
             format="json",
         )
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
-        self.assertEqual(response.data["max_results"], 4)
-        self.assertEqual(response.data["actions"][-2:], ["summarize", "translate"])
+        self.assertIn("summarize", response.data["actions"])
+
+    def test_plan_endpoint_rejects_blank_query(self):
+        response = self.client.post(
+            reverse("scholar:supervisor-plan"), {"query": ""}, format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_400_BAD_REQUEST)
+
+
+class SupervisorRunAPITest(APITestCase):
+    def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="runner", password="Test1234!"
+        )
+        self.client.force_authenticate(self.user)
+
+    @patch("scholar.supervisor_views.enqueue_supervisor_run")
+    def test_run_creates_record_and_enqueues_graph(self, enqueue_mock):
+        response = self.client.post(
+            reverse("scholar:supervisor-run"),
+            {"query": "RAG 논문 3편 찾아서 요약하고 번역해줘"},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        run = SupervisorRun.objects.get(pk=response.data["id"])
+        self.assertEqual(run.user, self.user)
+        self.assertEqual(run.status, SupervisorRun.Status.PENDING)
+        self.assertTrue(run.thread_id)
+        enqueue_mock.assert_called_once_with(run.id)
+
+    @patch("scholar.supervisor_views.enqueue_supervisor_run")
+    def test_ambiguous_request_does_not_run_the_graph(self, enqueue_mock):
+        response = self.client.post(
+            reverse("scholar:supervisor-run"), {"query": "요약해줘"}, format="json"
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertEqual(response.data["status"], SupervisorRun.Status.NEEDS_INPUT)
+        self.assertTrue(response.data["response"])
+        enqueue_mock.assert_not_called()
+
+    def test_run_requires_authentication(self):
+        self.client.force_authenticate(None)
+
+        response = self.client.post(
+            reverse("scholar:supervisor-run"), {"query": "논문 찾아줘"}, format="json"
+        )
+
+        self.assertIn(
+            response.status_code,
+            (status.HTTP_401_UNAUTHORIZED, status.HTTP_403_FORBIDDEN),
+        )
+
+    def test_run_detail_is_scoped_to_its_owner(self):
+        other = get_user_model().objects.create_user(
+            username="other", password="Test1234!"
+        )
+        run = SupervisorRun.objects.create(
+            user=other, thread_id="t-1", query="논문 찾아줘"
+        )
+
+        response = self.client.get(
+            reverse("scholar:supervisor-run-detail", args=[run.id])
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)

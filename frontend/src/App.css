@@ -20,12 +20,12 @@ button:disabled { cursor: not-allowed; }
 .empty-state, .artifact-empty { display: grid; min-height: 220px; place-items: center; padding: 20px; color: var(--muted); font-size: 0.9rem; line-height: 1.7; text-align: center; }
 
 /* Primary / secondary actions used across the existing feature components */
-.artifact-actions button, .artifact-action-link, .paper-chat__form button, .search-form__options button, .selection-toolbar button,
+.artifact-actions button, .paper-chat__form button, .search-form__options button, .selection-toolbar button,
 .supervisor-chat__form button, .auth-form > button {
-  border: 0; border-radius: var(--radius-sm); color: var(--on-accent); font-weight: 700; text-decoration: none; background: var(--accent-fill); cursor: pointer;
+  border: 0; border-radius: var(--radius-sm); color: var(--on-accent); font-weight: 700; background: var(--accent-fill); cursor: pointer;
   transition: filter 140ms ease;
 }
-.artifact-actions button:hover:not(:disabled), .artifact-action-link:hover, .paper-chat__form button:hover:not(:disabled), .search-form__options button:hover:not(:disabled),
+.artifact-actions button:hover:not(:disabled), .paper-chat__form button:hover:not(:disabled), .search-form__options button:hover:not(:disabled),
 .selection-toolbar button:hover:not(:disabled), .supervisor-chat__form button:hover:not(:disabled), .auth-form > button:hover:not(:disabled) { filter: brightness(1.08); }
 .artifact-actions button:disabled, .paper-chat__form button:disabled, .search-form__options button:disabled, .selection-toolbar button:disabled,
 .supervisor-chat__form button:disabled, .auth-form > button:disabled { opacity: 0.5; }
@@ -144,20 +144,13 @@ input, select, textarea { color: var(--ink); }
 .section-card__order { color: var(--accent); font-size: 0.66rem; font-weight: 750; letter-spacing: 0.1em; }
 .section-card h3 { margin: 5px 0 10px; color: var(--ink); font-size: 1rem; letter-spacing: 0; text-transform: none; }
 .section-card p, .summary-card p, .translation-card p { margin: 0; line-height: 1.8; white-space: pre-line; }
-.artifact-markdown { min-width: 0; overflow-wrap: anywhere; line-height: 1.8; }
-.artifact-markdown > :first-child { margin-top: 0; }
-.artifact-markdown > :last-child { margin-bottom: 0; }
-.artifact-markdown p { white-space: normal; }
-.artifact-markdown pre, .artifact-markdown .katex-display { max-width: 100%; overflow-x: auto; overflow-y: hidden; }
-.artifact-markdown table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
-.artifact-markdown th, .artifact-markdown td { padding: 8px 10px; border: 1px solid var(--border); }
 .artifact-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 12px; color: var(--muted); font-size: 0.74rem; }
 .artifact-meta strong { color: var(--ink); }
 .artifact-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .artifact-actions > div { display: grid; gap: 3px; }
 .artifact-actions strong { color: var(--ink); font-size: 0.9rem; }
 .artifact-actions span { color: var(--muted); font-size: 0.78rem; }
-.artifact-actions button, .artifact-action-link { flex: 0 0 auto; padding: 10px 15px; }
+.artifact-actions button { flex: 0 0 auto; padding: 10px 15px; }
 
 /* Paper Q&A */
 .paper-chat { display: grid; gap: 14px; }

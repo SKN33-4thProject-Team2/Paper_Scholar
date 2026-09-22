@@ -91,7 +91,7 @@ def _run_supervisor_run(run_id: int) -> None:
 def extract_paper_content(arxiv_id: str) -> int:
     from tools.extractor_tool import extract_and_save
 
-    return extract_and_save(arxiv_id, require_django_sync=True)
+    return extract_and_save(arxiv_id)
 
 
 def _run_extraction_job(job_id: int) -> None:

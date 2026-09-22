@@ -83,8 +83,7 @@ SUMMARY_PROMPT = """당신은 학술 논문 문단을 요약하는 분석가입�
 실험 결과를 요약할 때는 반드시 모델명, 과제/데이터셋, 실험 조건, 평가 지표와 수치를 함께 보존하세요.
 방법을 요약할 때는 실제로 사용한 모델·데이터·절차를 관련 연구의 소개와 구분하세요.
 저자가 명시한 한계와 결론은 보존하되, 원문에 없는 한계나 해석은 추가하지 마세요.
-핵심 주장이나 결과를 이해하는 데 필요한 표·수식 placeholder만 유지하세요.
-중요하지 않은 표·수식 placeholder는 요약에서 생략해도 됩니다. 유지한 placeholder의 이름은 바꾸지 마세요.
+표와 수식 placeholder는 삭제하거나 이름을 바꾸지 말고 해당 위치에 그대로 두세요.
 표/수식이 무엇을 나타내거나 어떤 결론을 뒷받침하는지 설명하는 문장이 있으면 반드시 요약에 포함하세요.
 표와 수식의 의미는 원문에 명시된 설명과 직접 확인 가능한 정보만 요약하세요.
 원문에 없는 수치 비교, 원인, 해석은 추론하거나 추가하지 마세요.
@@ -97,14 +96,19 @@ PAPER_PROMPT = """당신은 학술 논문 전체를 통합 요약하는 분석�
 입력된 원문과 동일한 언어로 요약하세요. 원문에 없는 내용은 추측하지 마세요.
 각 결과 수치를 해당 모델명, 과제/데이터셋, 실험 조건, 평가 지표와 함께 유지하세요.
 관련 연구에서 소개한 모델이나 방법을 본 논문의 실험 결과로 바꾸어 쓰지 마세요.
-핵심 주장이나 결과를 설명하는 데 필요한 표·수식 placeholder만 유지하세요.
-중요하지 않은 placeholder는 생략해도 되며, 유지한 placeholder의 이름은 바꾸지 마세요.
+표와 수식은 placeholder를 삭제·변경하지 말고 유지하세요.
 표와 수식의 의미는 원문에 명시된 설명과 직접 확인 가능한 정보만 요약하세요.
 원문에 없는 수치 비교, 원인, 해석은 추론하거나 추가하지 마세요.
 연구 목적, 핵심 방법, 주요 결과, 한계와 결론이 드러나도록 작성하세요.
 Markdown의 연구 목적, 연구 방법, 주요 결과, 한계 및 결론 항목으로 작성하세요.
 한계는 원문에서 확인되는 경우에만 쓰고, 확인되지 않으면 명시되지 않았다고 표시하세요.
 References, Bibliography, 참고문헌 항목은 만들지 마세요.
+"""
+
+MARKUP_REPAIR_PROMPT = """앞서 작성한 요약에서 표·수식 placeholder가 누락되거나 변경되었습니다.
+요약문의 문장과 내용은 유지하고, 아래 placeholder를 원래 순서대로 정확히 포함하여 다시 출력하세요.
+placeholder 외의 표·수식 원문은 직접 작성하지 마세요. 설명되지 않은 내용은 추가하지 마세요.
+JSON, Markdown 코드펜스, 부연 설명 없이 요약문만 출력하세요.
 """
 
 # 표는 전체 블록, 수식은 LaTeX 환경/display/inline 순서로 보호한다.
@@ -116,12 +120,6 @@ _MATH = re.compile(
     r"\\end\{(?:equation\*?|align\*?|gather\*?|multline\*?|cases|split|array|matrix|pmatrix|bmatrix)\}"
     r"|\$\$.*?\$\$|\\\[.*?\\\]|(?<!\$)\$(?!\$)(?:\\.|[^$\n])+?(?<!\\)\$(?!\$)", re.S)
 _TOKEN = re.compile(r"__SUMMARY_(?:TABLE|FORMULA)_\d{6}__")
-_UNSAFE_SUMMARY_MARKUP = re.compile(
-    r"\\(?:lx@xy|hskip|mskip|ignorespaces|raisebox|rotatebox|entry@|droprule)"
-    r"|\\begin\{(?:matrix|split|array)\}",
-    re.I,
-)
-_MAX_SUMMARY_MARKUP_CHARS = 500
 _WORD = re.compile(r"[A-Za-z가-힣][A-Za-z가-힣0-9_-]{1,}")
 _IMPORTANT = re.compile(r"\b\d+(?:\.\d+)?\s*%?|\b(?:significant|outperform|improv|achiev|result|propos|conclu|however|limitation|accuracy|precision|recall|f1|loss|dataset)\w*\b", re.I)
 _ARTIFACT_REF = re.compile(
@@ -183,45 +181,6 @@ def restore_markup_safely(text: str, protection: ProtectedText) -> str:
         return restore_markup(
             cleaned + "\n\n" + "\n\n".join(protection.order), protection
         )
-
-
-def restore_selected_markup(text: str, protection: ProtectedText) -> str:
-    """요약이 실제로 선택한 표·수식만 원문으로 복원한다.
-
-    요약 모델이 중요하지 않은 수식을 생략하는 것은 정상이다. 다만 존재하지 않는
-    토큰을 만들거나 같은 토큰을 반복하거나 원문 순서를 뒤집은 경우는 거부한다.
-    """
-    selected = tuple(_TOKEN.findall(text))
-    if len(selected) != len(set(selected)):
-        raise ValueError("요약 모델이 같은 표/수식 placeholder를 반복했습니다.")
-    if any(token not in protection.replacements for token in selected):
-        raise ValueError("요약 모델이 알 수 없는 표/수식 placeholder를 만들었습니다.")
-
-    expected_order = tuple(token for token in protection.order if token in selected)
-    if selected != expected_order:
-        raise ValueError("요약 모델이 표/수식 placeholder 순서를 변경했습니다.")
-
-    restored = text
-    for token in selected:
-        original = protection.replacements[token]
-        if (
-            len(original) > _MAX_SUMMARY_MARKUP_CHARS
-            or _UNSAFE_SUMMARY_MARKUP.search(original)
-        ):
-            # TeX 그림·레이아웃 덤프는 KaTeX로 표시할 수 없고 요약도 압도한다.
-            # 해당 placeholder를 언급한 한 줄을 통째로 제거해 문장 파편도 남기지 않는다.
-            restored = re.sub(
-                rf"(?m)^[^\n]*{re.escape(token)}[^\n]*(?:\n|$)",
-                "",
-                restored,
-            )
-            restored = restored.replace(token, "")
-            continue
-        restored = restored.replace(token, original)
-    restored = re.sub(r"\n{3,}", "\n\n", restored).strip()
-    if _TOKEN.search(restored):
-        raise ValueError("선택된 표/수식 placeholder를 모두 복원하지 못했습니다.")
-    return restored
 
 
 def paragraph_chunks(text: str, max_chars: int = 5000) -> list[str]:
@@ -536,8 +495,34 @@ class SummaryTool:
             db.execute("ALTER TABLE paper_summaries ADD COLUMN summary_text TEXT NOT NULL DEFAULT ''")
 
     def _restore_or_repair(self, text: str, protection: ProtectedText) -> str:
-        """요약에 남겨진 placeholder만 복원해 수식 원문 덤프를 방지한다."""
-        return restore_selected_markup(text, protection)
+        """placeholder가 누락된 모델 응답을 한 번 보정한 뒤 복원한다."""
+        try:
+            return restore_markup(text, protection)
+        except ValueError:
+            if not protection.order:
+                raise
+            logger.log(
+                LogCode.SUMMARY_RETRYING,
+                reason="markup_placeholder_repair",
+                placeholder_count=len(protection.order),
+                model=self.model,
+            )
+            tokens = ", ".join(protection.order)
+            repair_prompt = (
+                f"{MARKUP_REPAIR_PROMPT}\n필수 placeholder 순서: {tokens}\n"
+                f"[요약문]\n{text}"
+            )
+            repaired = self._generate(
+                repair_prompt,
+                model=self.model,
+                max_tokens=DEFAULT_CHUNK_MAX_TOKENS,
+                temperature=DEFAULT_TEMPERATURE,
+                timeout=DEFAULT_TIMEOUT,
+            )
+            try:
+                return restore_markup(str(repaired).strip(), protection)
+            except ValueError:
+                return restore_markup_safely(str(repaired).strip(), protection)
 
     def summarize(self, paper_id: str, *, title: str | None = None) -> SummaryResult:
         logger.log(
