@@ -65,6 +65,48 @@ except ImportError:
     EXTRACTED_DB = DATA_DIR / "paper_extract" / "extracted_papers.db"
 
 
+def ensure_library_record(
+    paper_id: str,
+    *,
+    title: str = "",
+    authors: str = "",
+    summary: str = "",
+    pdf_url: str = "",
+) -> bool:
+    """서재 DB(saved_papers.db)에 논문 한 줄을 보장한다.
+
+    extract_and_save 는 이 행이 없으면 추출을 거부한다. 웹에서 저장한 논문은
+    MySQL 에만 들어가므로, 추출을 걸기 전에 여기에도 등록해 둬야 한다.
+    이미 있으면 건드리지 않는다(기존 메타데이터를 덮어쓰지 않기 위해).
+    """
+    clean_id = re.sub(r"v\d+$", "", str(paper_id or "").strip())
+    if not clean_id:
+        return False
+
+    LIBRARY_DB.parent.mkdir(parents=True, exist_ok=True)
+    with sqlite3.connect(LIBRARY_DB) as library:
+        library.execute(
+            """CREATE TABLE IF NOT EXISTS papers (
+                id      TEXT PRIMARY KEY,
+                title   TEXT,
+                authors TEXT,
+                summary TEXT,
+                pdf_url TEXT,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            )"""
+        )
+        existing = library.execute(
+            "SELECT 1 FROM papers WHERE id = ?", (clean_id,)
+        ).fetchone()
+        if existing:
+            return False
+        library.execute(
+            "INSERT INTO papers (id, title, authors, summary, pdf_url) VALUES (?, ?, ?, ?, ?)",
+            (clean_id, title or "", authors or "", summary or "", pdf_url or ""),
+        )
+    return True
+
+
 def init_schema() -> None:
     """추출된 논문 섹션을 저장할 SQLite 테이블(paper_sections)을 초기화합니다."""
     EXTRACTED_DB.parent.mkdir(parents=True, exist_ok=True)
