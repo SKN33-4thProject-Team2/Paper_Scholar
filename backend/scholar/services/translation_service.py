@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import logging
+import requests
+from django.conf import settings
+
 from ..models import Paper, Translation
 
+# 로깅 객체 초기화
+logger = logging.getLogger(__name__)
 
+# 마크다운 및 토큰 보존용 학술 프롬프트
 TRANSLATION_PROMPT = """Translate the following academic paper summary from English to Korean.
 Return only the complete Korean translation.
 Do not summarize, omit, or add information.
@@ -109,3 +116,59 @@ def generate_summary_translation(
         chunk_count=len(chunks),
     )
     return translation
+
+
+# ==============================================================================
+# RunPod Ollama Direct Inference Endpoint
+# ==============================================================================
+def translate_text(text: str, target_language: str = "Korean") -> str:
+    """
+    RunPod에서 구동 중인 Ollama(qwen2.5:3b) 인스턴스를 호출하여 텍스트를 대상 언어로 번역합니다.
+    """
+    # [경계값 검증] 입력 텍스트 공백 및 Null 처리
+    if not text or not text.strip():
+        logger.warning("번역할 입력 텍스트가 비어 있습니다.")
+        return ""
+
+    # RunPod Ollama 엔드포인트 및 모델 파라미터 로드
+    base_url = settings.OLLAMA_BASE_URL
+    model_name = settings.OLLAMA_MODEL
+    api_url = f"{base_url}/api/generate"
+
+    # HTTP 요청 헤더 구성 (RunPod Bearer Token 포함)
+    headers = {
+        "Content-Type": "application/json",
+    }
+    if hasattr(settings, "OLLAMA_HEADERS") and settings.OLLAMA_HEADERS:
+        headers.update(settings.OLLAMA_HEADERS)
+
+    # 학술 번역 프롬프트 구성
+    prompt = (
+        f"You are a professional academic paper translator. "
+        f"Translate the following text into natural and accurate {target_language}. "
+        f"Preserve technical terms and formatting without adding explanations:\n\n"
+        f"{text}"
+    )
+
+    payload = {
+        "model": model_name,
+        "prompt": prompt,
+        "stream": False,
+        "options": {
+            "temperature": 0.2,  # 번역 왜곡 방지를 위한 낮은 온도로 설정
+        },
+    }
+
+    try:
+        # RunPod 프록시 엔드포인트로 인퍼런스 요청 전송 (네트워크 지연 대비 타임아웃 120초)
+        response = requests.post(api_url, json=payload, headers=headers, timeout=120)
+        response.raise_for_status()
+        result_json = response.json()
+
+        # 번역 결과 텍스트 추출
+        translated_text = result_json.get("response", "").strip()
+        return translated_text
+
+    except requests.exceptions.RequestException as e:
+        logger.error(f"[RunPod Ollama] 번역 API 호출 실패 (URL: {api_url}): {str(e)}")
+        raise RuntimeError(f"RunPod Ollama 번역 처리 중 네트워크 오류가 발생했습니다: {str(e)}") from e

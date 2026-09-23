@@ -36,6 +36,7 @@ if str(SRC_ROOT) not in sys.path:
 
 
 load_dotenv(PROJECT_ROOT / ".env")
+load_dotenv(BASE_DIR / ".env")
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
@@ -214,3 +215,30 @@ CORS_ALLOWED_ORIGINS = [
     ).split(",")
     if origin.strip()
 ]
+
+
+# ==============================================================================
+# RunPod & Ollama Configuration
+# ==============================================================================
+# 1. RunPod 시크릿 환경 변수 로드
+RUNPOD_API_KEY = os.getenv("RUNPOD_API_KEY", "").strip()
+RUNPOD_POD_ID = os.getenv("RUNPOD_POD_ID", "").strip()
+RUNPOD_API_URL = os.getenv("RUNPOD_API_URL", "").strip()
+
+# 2. Ollama 엔드포인트 URL 동적 결정 로직
+if RUNPOD_API_URL:
+    # RUNPOD_API_URL이 직접 설정된 경우 우선 적용
+    OLLAMA_BASE_URL = RUNPOD_API_URL.rstrip("/")
+elif RUNPOD_POD_ID:
+    # POD ID 기반 RunPod 11434 프록시 엔드포인트 자동 생성
+    OLLAMA_BASE_URL = f"https://{RUNPOD_POD_ID}-11434.proxy.runpod.net"
+else:
+    # 환경 변수가 전혀 없을 경우에만 로컬 주소로 폴백
+    OLLAMA_BASE_URL = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+
+# 3. 기본 모델 및 RunPod Bearer 인증 헤더 설정
+OLLAMA_MODEL = os.getenv("OLLAMA_MODEL", "qwen2.5:3b")
+
+OLLAMA_HEADERS = {}
+if RUNPOD_API_KEY:
+    OLLAMA_HEADERS["Authorization"] = f"Bearer {RUNPOD_API_KEY}"
