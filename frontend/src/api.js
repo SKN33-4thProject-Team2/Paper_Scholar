@@ -163,7 +163,10 @@ export function summarizePaper(arxivId, force = false) {
 }
 
 export async function getPaperTranslations(arxivId) {
-  const payload = await request(`/papers/${encodeURIComponent(arxivId)}/translations/`)
+  const query = new URLSearchParams({ type: 'summary', target_language: 'ko' })
+  const payload = await request(
+    `/papers/${encodeURIComponent(arxivId)}/translations/?${query.toString()}`,
+  )
   return unwrapListResponse(payload)
 }
 

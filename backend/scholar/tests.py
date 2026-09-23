@@ -20,6 +20,16 @@ User = get_user_model()
 
 
 class TranslationMarkupFallbackTest(SimpleTestCase):
+    def test_summary_output_language_is_always_english(self):
+        from src.tools.summary_tool_v2 import language_instruction
+
+        instruction = language_instruction("한국어로 작성된 본문입니다.")
+
+        self.assertEqual(
+            instruction,
+            "OUTPUT LANGUAGE: English only. Do not translate into Korean.",
+        )
+
     def test_translation_falls_back_to_piecewise_text_when_tokens_are_lost(self):
         from .services.translation_service import translate_chunk_preserving_markup
 
@@ -257,6 +267,24 @@ class PaperAPITest(AuthenticatedAPITestCase):
         self.assertEqual(paper["section_count"], 2)
         self.assertEqual(paper["translation_count"], 1)
         self.assertTrue(paper["has_summary"])
+
+    def test_translation_count_only_includes_korean_summary_translation(self):
+        Translation.objects.create(
+            paper=self.paper,
+            translation_type=Translation.TranslationType.FULL_TEXT,
+            source_text="Full paper text",
+            translated_text="전체 논문 번역",
+            target_language="ko",
+        )
+
+        response = self.client.get(reverse("scholar:paper-list"))
+        paper = next(
+            item
+            for item in response.data["results"]
+            if item["arxiv_id"] == self.paper.arxiv_id
+        )
+
+        self.assertEqual(paper["translation_count"], 1)
 
     def test_health_check_returns_service_status(self):
         response = self.client.get(reverse("scholar:health"))

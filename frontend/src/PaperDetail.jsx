@@ -160,11 +160,11 @@ function SummaryTab({ summary, job, canSummarize, onGenerate }) {
     <div className="summary-tab">
       <div className="artifact-actions">
         <div>
-          <strong>{job ? statusLabels[job.status] : '논문 요약'}</strong>
+          <strong>{job ? statusLabels[job.status] : '영어 논문 요약'}</strong>
           <span>
             {job?.status === 'failed'
               ? job.error_message
-              : '추출된 본문을 기반으로 최종 요약을 생성합니다.'}
+              : '추출된 본문을 기반으로 영어 요약을 생성합니다.'}
           </span>
         </div>
         <button
@@ -207,7 +207,7 @@ function TranslationsTab({ translations, job, canTranslate, onGenerate }) {
     <div className="translation-tab">
       <div className="artifact-actions">
         <div>
-          <strong>{job ? statusLabels[job.status] : '요약 번역'}</strong>
+          <strong>{job ? statusLabels[job.status] : '한국어 요약 번역'}</strong>
           <span>
             {job?.status === 'failed'
               ? job.error_message

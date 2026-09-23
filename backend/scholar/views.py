@@ -1,4 +1,4 @@
-from django.db.models import Count, Exists, OuterRef
+from django.db.models import Count, Exists, OuterRef, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from rest_framework.decorators import api_view, permission_classes
@@ -247,7 +247,14 @@ def paper_api_queryset(user=None):
     return (
         queryset.annotate(
             api_section_count=Count("sections", distinct=True),
-            api_translation_count=Count("translations", distinct=True),
+            api_translation_count=Count(
+                "translations",
+                filter=Q(
+                    translations__translation_type=Translation.TranslationType.SUMMARY,
+                    translations__target_language="ko",
+                ),
+                distinct=True,
+            ),
             api_has_summary=Exists(
                 PaperSummary.objects.filter(paper_id=OuterRef("pk"))
             ),
