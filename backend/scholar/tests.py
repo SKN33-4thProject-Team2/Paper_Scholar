@@ -1,8 +1,10 @@
 from django.contrib.auth import get_user_model
+from django.test import SimpleTestCase
 from django.urls import reverse
 from rest_framework import status
 from rest_framework.test import APITestCase
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, call, patch
 
 from .models import (
     LibraryEntry,
@@ -15,6 +17,83 @@ from .models import (
 
 
 User = get_user_model()
+
+
+class TranslationMarkupFallbackTest(SimpleTestCase):
+    def test_translation_falls_back_to_piecewise_text_when_tokens_are_lost(self):
+        from .services.translation_service import translate_chunk_preserving_markup
+
+        class TokenDroppingService:
+            def translate(self, prompt):
+                if "__APRAG_PROTECTED_000001__" in prompt:
+                    return "보호 토큰을 누락한 번역"
+                return "번역된 텍스트"
+
+        translated = translate_chunk_preserving_markup(
+            TokenDroppingService(),
+            r"Before \(x + y\) after.",
+        )
+
+        self.assertIn(r"\(x + y\)", translated)
+        self.assertNotIn("__APRAG_PROTECTED_", translated)
+        self.assertGreaterEqual(translated.count("번역된 텍스트"), 2)
+
+
+class SummaryProviderFallbackTest(SimpleTestCase):
+    def test_retryable_nvidia_error_falls_back_to_single_call_ollama(self):
+        from .services.summary_service import generate_paper_summary
+
+        nvidia_tool = Mock()
+        nvidia_tool.summarize.side_effect = RuntimeError(
+            'NVIDIA API 오류 503: {"error":{"message":"Service temporarily overloaded"}}'
+        )
+        ollama_tool = Mock()
+        ollama_tool.summarize.return_value = SimpleNamespace(model="qwen2.5:3b")
+        stored_summary = Mock(model_name="qwen2.5:3b")
+        paper = SimpleNamespace(arxiv_id="1504.03867", title="Example paper")
+
+        with (
+            patch(
+                "src.tools.summary_tool_v2.SummaryTool",
+                side_effect=(nvidia_tool, ollama_tool),
+            ) as summary_tool_class,
+            patch(
+                "scholar.services.summary_service.PaperSummary.objects.get",
+                return_value=stored_summary,
+            ),
+        ):
+            result = generate_paper_summary(paper)
+
+        self.assertIs(result, stored_summary)
+        self.assertEqual(
+            summary_tool_class.call_args_list,
+            [
+                call(single_call=True),
+                call(provider="ollama", model="qwen2.5:3b", single_call=True),
+            ],
+        )
+        nvidia_tool.summarize.assert_called_once_with(
+            "1504.03867", title="Example paper"
+        )
+        ollama_tool.summarize.assert_called_once_with(
+            "1504.03867", title="Example paper"
+        )
+
+    def test_non_retryable_nvidia_error_is_not_hidden(self):
+        from .services.summary_service import generate_paper_summary
+
+        nvidia_tool = Mock()
+        nvidia_tool.summarize.side_effect = RuntimeError("NVIDIA API 오류 401")
+        paper = SimpleNamespace(arxiv_id="1504.03867", title="Example paper")
+
+        with patch(
+            "src.tools.summary_tool_v2.SummaryTool",
+            return_value=nvidia_tool,
+        ) as summary_tool_class:
+            with self.assertRaisesRegex(RuntimeError, "401"):
+                generate_paper_summary(paper)
+
+        summary_tool_class.assert_called_once_with(single_call=True)
 
 
 class AuthenticationAPITest(APITestCase):
@@ -213,6 +292,32 @@ class PaperAPITest(AuthenticatedAPITestCase):
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["arxiv_id"], "1702.01806")
         self.assertEqual(response.data["entry_url"], self.paper.entry_url)
+
+    def test_detail_includes_current_users_latest_extraction_failure(self):
+        ProcessingJob.objects.create(
+            user=self.user,
+            paper=self.empty_paper,
+            job_type=ProcessingJob.JobType.EXTRACT,
+            status=ProcessingJob.Status.FAILED,
+            error_message=(
+                "arXiv HTML을 찾을 수 없습니다 (404 Not Found): 1303.1390. "
+                "해당 논문은 HTML 렌더링이 제공되지 않는 구형 논문일 수 있습니다."
+            ),
+        )
+
+        response = self.client.get(
+            reverse(
+                "scholar:paper-detail",
+                kwargs={"arxiv_id": self.empty_paper.arxiv_id},
+            )
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response.data["latest_extraction_job"]["status"], "failed")
+        self.assertIn(
+            "404 Not Found",
+            response.data["latest_extraction_job"]["error_message"],
+        )
 
     def test_detail_accepts_legacy_arxiv_id_with_slash(self):
         response = self.client.get(
@@ -540,6 +645,39 @@ class PaperSaveAPITest(AuthenticatedAPITestCase):
         )
 
         self.assertEqual(response.status_code, status.HTTP_404_NOT_FOUND)
+
+    @patch("scholar.views.enqueue_extraction_job")
+    def test_extract_endpoint_retries_failed_legacy_paper(self, enqueue_mock):
+        paper = Paper.objects.create(
+            arxiv_id="nucl-ex/0104001",
+            title="Legacy arXiv paper",
+            authors=[],
+        )
+        self.add_to_library(paper)
+        failed_job = ProcessingJob.objects.create(
+            user=self.user,
+            paper=paper,
+            job_type=ProcessingJob.JobType.EXTRACT,
+            status=ProcessingJob.Status.FAILED,
+            progress_total=1,
+            error_message="previous extraction failed",
+        )
+
+        response = self.client.post(
+            reverse(
+                "scholar:paper-extract",
+                kwargs={"arxiv_id": paper.arxiv_id},
+            ),
+            {},
+            format="json",
+        )
+
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        self.assertNotEqual(response.data["job"]["id"], failed_job.id)
+        retry_job = ProcessingJob.objects.get(pk=response.data["job"]["id"])
+        self.assertEqual(retry_job.status, ProcessingJob.Status.PENDING)
+        self.assertEqual(retry_job.user, self.user)
+        enqueue_mock.assert_called_once_with(retry_job.id)
 
     @patch("scholar.views.enqueue_extraction_job")
     @patch("src.feature.search.ArxivSearchBot")

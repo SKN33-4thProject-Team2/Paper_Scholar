@@ -1,15 +1,12 @@
 from django.urls import path, register_converter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from .supervisor_views import (
-    SupervisorPlanAPIView,
-    SupervisorRunAPIView,
-    SupervisorRunDetailAPIView,
-)
+from .supervisor_views import SupervisorPlanAPIView
 from .views import (
     ArxivSearchAPIView,
     CurrentUserAPIView,
     PaperDetailAPIView,
+    PaperExtractAPIView,
     PaperListAPIView,
     PaperQuestionAPIView,
     PaperSaveAPIView,
@@ -52,20 +49,6 @@ urlpatterns = [
     path("supervisor/plan", SupervisorPlanAPIView.as_view(), name="supervisor-plan-noslash"),
     path("supervisor/plan/", SupervisorPlanAPIView.as_view(), name="supervisor-plan"),
 
-    # Supervisor 그래프 비동기 실행 및 상태 폴링
-    path("supervisor/run", SupervisorRunAPIView.as_view(), name="supervisor-run-noslash"),
-    path("supervisor/run/", SupervisorRunAPIView.as_view(), name="supervisor-run"),
-    path(
-        "supervisor/run/<int:pk>",
-        SupervisorRunDetailAPIView.as_view(),
-        name="supervisor-run-detail-noslash",
-    ),
-    path(
-        "supervisor/run/<int:pk>/",
-        SupervisorRunDetailAPIView.as_view(),
-        name="supervisor-run-detail",
-    ),
-
     # 사용자 인증
     path("auth/register", RegisterAPIView.as_view(), name="auth-register-noslash"),
     path("auth/register/", RegisterAPIView.as_view(), name="auth-register"),
@@ -91,6 +74,8 @@ urlpatterns = [
     # 논문 상세 및 하위 서빙 엔드포인트
     path("papers/<arxiv:arxiv_id>/sections", PaperSectionsAPIView.as_view(), name="paper-sections-noslash"),
     path("papers/<arxiv:arxiv_id>/sections/", PaperSectionsAPIView.as_view(), name="paper-sections"),
+    path("papers/<arxiv:arxiv_id>/extract", PaperExtractAPIView.as_view(), name="paper-extract-noslash"),
+    path("papers/<arxiv:arxiv_id>/extract/", PaperExtractAPIView.as_view(), name="paper-extract"),
     path("papers/<arxiv:arxiv_id>/summary", PaperSummaryAPIView.as_view(), name="paper-summary-noslash"),
     path("papers/<arxiv:arxiv_id>/summary/", PaperSummaryAPIView.as_view(), name="paper-summary"),
     path("papers/<arxiv:arxiv_id>/summarize", PaperSummarizeAPIView.as_view(), name="paper-summarize-noslash"),
