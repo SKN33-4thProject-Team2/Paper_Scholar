@@ -1,9 +1,4 @@
 import { useEffect, useState } from 'react'
-import ReactMarkdown from 'react-markdown'
-import rehypeKatex from 'rehype-katex'
-import remarkGfm from 'remark-gfm'
-import remarkMath from 'remark-math'
-import 'katex/dist/katex.min.css'
 import {
   extractPaper,
   getProcessingJob,
@@ -13,6 +8,7 @@ import {
   summarizePaper,
   translatePaper,
 } from './api'
+import MarkdownContent from './MarkdownContent'
 import PaperChat from './PaperChat'
 
 const EMPTY_ARTIFACTS = {
@@ -27,25 +23,6 @@ const TRANSLATION_TYPE_LABELS = {
   summary: '요약',
   section: '본문 섹션',
   full_text: '전체 본문',
-}
-
-function normalizeMathMarkdown(value = '') {
-  return value
-    .replace(/\\\[([\s\S]*?)\\\]/g, (_match, math) => `$$\n${math.trim()}\n$$`)
-    .replace(/\\\(([\s\S]*?)\\\)/g, (_match, math) => `$${math.trim()}$`)
-}
-
-function MarkdownContent({ text }) {
-  return (
-    <div className="artifact-markdown">
-      <ReactMarkdown
-        remarkPlugins={[remarkGfm, remarkMath]}
-        rehypePlugins={[rehypeKatex]}
-      >
-        {normalizeMathMarkdown(text)}
-      </ReactMarkdown>
-    </div>
-  )
 }
 
 function OverviewTab({ paper }) {

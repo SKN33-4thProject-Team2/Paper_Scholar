@@ -7,6 +7,7 @@ import {
   summarizePaper,
   translatePaper,
 } from './api'
+import MarkdownContent from './MarkdownContent'
 
 
 const ACTION_LABELS = {
@@ -232,7 +233,11 @@ export default function SupervisorChat({ onSaved }) {
             key={item.id}
           >
             <span>{item.role === 'user' ? '나' : 'Supervisor'}</span>
-            <p>{item.text}</p>
+            {item.role === 'assistant' ? (
+              <MarkdownContent text={item.text} />
+            ) : (
+              <p>{item.text}</p>
+            )}
             {item.plan?.actions?.length > 0 && (
               <div className="supervisor-plan">
                 {item.plan.actions.map((action) => (
