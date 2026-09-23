@@ -151,8 +151,6 @@ input, select, textarea { color: var(--ink); }
 .artifact-markdown pre, .artifact-markdown .katex-display { max-width: 100%; overflow-x: auto; overflow-y: hidden; }
 .artifact-markdown table { display: block; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
 .artifact-markdown th, .artifact-markdown td { padding: 8px 10px; border: 1px solid var(--border); }
-.artifact-meta { display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 12px; color: var(--muted); font-size: 0.74rem; }
-.artifact-meta strong { color: var(--ink); }
 .artifact-actions { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
 .artifact-actions > div { display: grid; gap: 3px; }
 .artifact-actions strong { color: var(--ink); font-size: 0.9rem; }

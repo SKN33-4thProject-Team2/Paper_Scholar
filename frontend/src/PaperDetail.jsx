@@ -18,13 +18,6 @@ const EMPTY_ARTIFACTS = {
   translations: null,
 }
 
-const TRANSLATION_TYPE_LABELS = {
-  abstract: '초록',
-  summary: '요약',
-  section: '본문 섹션',
-  full_text: '전체 본문',
-}
-
 function OverviewTab({ paper }) {
   return (
     <div className="paper-tab-content">
@@ -160,11 +153,6 @@ function SummaryTab({ summary, job, canSummarize, onGenerate }) {
       )}
       {summary && (
         <section className="summary-card">
-          <div className="artifact-meta">
-            <span>모델 {summary.model_name || '정보 없음'}</span>
-            <span>섹션 {summary.section_count}개</span>
-            <span>청크 {summary.chunk_count}개</span>
-          </div>
           <MarkdownContent text={summary.summary_text} />
         </section>
       )}
@@ -213,16 +201,6 @@ function TranslationsTab({ translations, job, canTranslate, onGenerate }) {
         <div className="translation-list">
           {translations.map((translation) => (
             <section className="translation-card" key={translation.id}>
-              <div className="artifact-meta">
-                <strong>
-                  {TRANSLATION_TYPE_LABELS[translation.translation_type]
-                    || translation.translation_type}
-                </strong>
-                <span>
-                  {translation.source_language} → {translation.target_language}
-                </span>
-                {translation.model_name && <span>모델 {translation.model_name}</span>}
-              </div>
               <MarkdownContent text={translation.translated_text} />
             </section>
           ))}
