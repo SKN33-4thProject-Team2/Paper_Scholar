@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { askPaper } from './api'
+import MarkdownContent from './MarkdownContent'
 
 export default function PaperChat({ paper }) {
   const [question, setQuestion] = useState('')
@@ -58,14 +59,20 @@ export default function PaperChat({ paper }) {
             key={message.id}
           >
             <span>{message.role === 'user' ? '나' : '논문 답변'}</span>
-            <p>{message.text}</p>
+            {message.role === 'assistant' ? (
+              <MarkdownContent text={message.text} />
+            ) : (
+              <p>{message.text}</p>
+            )}
             {message.model && <small>모델 {message.model}</small>}
             {message.sources?.length > 0 && (
               <details className="paper-chat__sources">
                 <summary>근거 {message.sources.length}개 보기</summary>
                 <ol>
                   {message.sources.map((source) => (
-                    <li key={`${message.id}-${source.index}`}>{source.text}</li>
+                    <li key={`${message.id}-${source.index}`}>
+                      <MarkdownContent text={source.text} />
+                    </li>
                   ))}
                 </ol>
               </details>
