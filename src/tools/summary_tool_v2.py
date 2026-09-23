@@ -88,13 +88,13 @@ SUMMARY_PROMPT = """당신은 학술 논문 문단을 요약하는 분석가입�
 표/수식이 무엇을 나타내거나 어떤 결론을 뒷받침하는지 설명하는 문장이 있으면 반드시 요약에 포함하세요.
 표와 수식의 의미는 원문에 명시된 설명과 직접 확인 가능한 정보만 요약하세요.
 원문에 없는 수치 비교, 원인, 해석은 추론하거나 추가하지 마세요.
-입력된 원문과 동일한 언어로 요약하세요. 원문에 없는 내용은 추측하지 마세요.
+항상 영어로 요약하세요. 원문에 없는 내용은 추측하지 마세요.
 문단의 핵심 내용과 표·수식 설명을 빠짐없이 포함하되, 불필요하게 길게 확장하지 마세요.
 """
 
 PAPER_PROMPT = """당신은 학술 논문 전체를 통합 요약하는 분석가입니다.
 입력된 청크 요약만 사용하여 섹션의 핵심 주장, 방법, 결과를 중복 없이 통합하세요.
-입력된 원문과 동일한 언어로 요약하세요. 원문에 없는 내용은 추측하지 마세요.
+항상 영어로 요약하세요. 원문에 없는 내용은 추측하지 마세요.
 각 결과 수치를 해당 모델명, 과제/데이터셋, 실험 조건, 평가 지표와 함께 유지하세요.
 관련 연구에서 소개한 모델이나 방법을 본 논문의 실험 결과로 바꾸어 쓰지 마세요.
 핵심 주장이나 결과를 설명하는 데 필요한 표·수식 placeholder만 유지하세요.
@@ -252,16 +252,9 @@ def _sentences(text: str) -> list[str]:
     return [s.strip() for s in re.split(r"(?<=[.!?。！？])\s+|\n+", text) if s.strip()]
 
 
-def language_instruction(text: str) -> str:
-    """추출 원문의 언어를 간단히 판별해 모델의 출력 언어를 고정한다."""
-    letters = re.findall(r"[A-Za-z가-힣]", text)
-    english = sum(ch.isascii() and ch.isalpha() for ch in letters)
-    korean = sum("가" <= ch <= "힣" for ch in letters)
-    if english >= korean * 2:
-        return "OUTPUT LANGUAGE: English only. Do not translate into Korean."
-    if korean >= english:
-        return "출력 언어: 한국어만 사용하세요. 영어로 번역하지 마세요."
-    return "Output in the same language as the source text."
+def language_instruction(_text: str) -> str:
+    """요약 탭의 계약에 맞춰 모델 출력 언어를 영어로 고정한다."""
+    return "OUTPUT LANGUAGE: English only. Do not translate into Korean."
 
 
 def extractive_section_summary(text: str, title: str = "", *, max_sentences: int = 5) -> str:
