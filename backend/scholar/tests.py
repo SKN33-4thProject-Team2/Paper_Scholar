@@ -38,6 +38,60 @@ class TranslationMarkupFallbackTest(SimpleTestCase):
         self.assertNotIn("__APRAG_PROTECTED_", translated)
         self.assertGreaterEqual(translated.count("번역된 텍스트"), 2)
 
+    def test_full_text_translation_preserves_section_order_and_titles(self):
+        from .services.translation_service import (
+            FULL_TEXT_TRANSLATION_PROMPT,
+            generate_full_text_translation,
+        )
+
+        sections = Mock()
+        sections.order_by.return_value = [
+            SimpleNamespace(
+                section_title="Introduction",
+                section_text="First section.",
+            ),
+            SimpleNamespace(
+                section_title="Method",
+                section_text="Second section.",
+            ),
+        ]
+        paper = SimpleNamespace(arxiv_id="2602.99999", sections=sections)
+        service = SimpleNamespace(model="translation-model")
+        stored_translation = SimpleNamespace()
+
+        with (
+            patch(
+                "scholar.services.translation_service._translate_markdown",
+                return_value=(service, ["chunk-1", "chunk-2"], "전체 번역"),
+            ) as translate_mock,
+            patch(
+                "src.services.django_paper_repository.upsert_translation",
+                return_value=(stored_translation, True),
+            ) as upsert_mock,
+        ):
+            result = generate_full_text_translation(paper)
+
+        source_text = (
+            "# Introduction\n\nFirst section.\n\n"
+            "# Method\n\nSecond section."
+        )
+        sections.order_by.assert_called_once_with("section_order")
+        translate_mock.assert_called_once_with(
+            source_text,
+            translation_prompt=FULL_TEXT_TRANSLATION_PROMPT,
+        )
+        upsert_mock.assert_called_once_with(
+            paper.arxiv_id,
+            source_text=source_text,
+            translated_text="전체 번역",
+            translation_type=Translation.TranslationType.FULL_TEXT,
+            source_language="en",
+            target_language="ko",
+            model_name="translation-model",
+            chunk_count=2,
+        )
+        self.assertIs(result, stored_translation)
+
 
 class SummaryProviderFallbackTest(SimpleTestCase):
     def test_retryable_nvidia_error_falls_back_to_single_call_ollama(self):
@@ -255,7 +309,7 @@ class PaperAPITest(AuthenticatedAPITestCase):
         )
         self.assertEqual(paper["arxiv_id"], "1702.01806")
         self.assertEqual(paper["section_count"], 2)
-        self.assertEqual(paper["translation_count"], 1)
+        self.assertEqual(paper["translation_count"], 0)
         self.assertTrue(paper["has_summary"])
 
     def test_health_check_returns_service_status(self):
@@ -377,6 +431,7 @@ class PaperAPITest(AuthenticatedAPITestCase):
 
         self.assertEqual(response.status_code, status.HTTP_200_OK)
         self.assertEqual(response.data["summary_text"], "Paper summary")
+        self.assertEqual(response.data["translated_text"], "논문 요약")
         self.assertEqual(response.data["model_name"], "test-model")
 
     def test_summary_returns_404_when_paper_has_no_summary(self):
@@ -928,8 +983,13 @@ class PaperSummarizeAPITest(AuthenticatedAPITestCase):
         self.assertEqual(response.status_code, status.HTTP_409_CONFLICT)
         enqueue_mock.assert_not_called()
 
+    @patch("scholar.services.translation_service.generate_summary_translation")
     @patch("scholar.services.summary_service.generate_paper_summary")
-    def test_summary_worker_completes_job(self, generate_mock):
+    def test_summary_worker_completes_job(
+        self,
+        generate_mock,
+        translate_mock,
+    ):
         from .jobs import _run_summary_job
 
         summary = PaperSummary.objects.create(
@@ -950,12 +1010,14 @@ class PaperSummarizeAPITest(AuthenticatedAPITestCase):
         job.refresh_from_db()
 
         generate_mock.assert_called_once_with(self.paper)
+        translate_mock.assert_called_once_with(self.paper)
         self.assertEqual(job.status, ProcessingJob.Status.COMPLETED)
         self.assertEqual(job.progress_current, 1)
         self.assertEqual(job.model_name, "summary-model")
 
+    @patch("scholar.services.translation_service.generate_summary_translation")
     @patch("scholar.services.summary_service.generate_paper_summary")
-    def test_summary_worker_records_failure(self, generate_mock):
+    def test_summary_worker_records_failure(self, generate_mock, translate_mock):
         from .jobs import _run_summary_job
 
         generate_mock.side_effect = RuntimeError("summary failed")
@@ -970,6 +1032,7 @@ class PaperSummarizeAPITest(AuthenticatedAPITestCase):
 
         self.assertEqual(job.status, ProcessingJob.Status.FAILED)
         self.assertEqual(job.error_message, "summary failed")
+        translate_mock.assert_not_called()
 
 
 class PaperTranslateAPITest(AuthenticatedAPITestCase):
@@ -986,6 +1049,12 @@ class PaperTranslateAPITest(AuthenticatedAPITestCase):
             model_name="summary-model",
             section_count=1,
             chunk_count=1,
+        )
+        PaperSection.objects.create(
+            paper=self.paper,
+            section_order=1,
+            section_title="Introduction",
+            section_text="Full paper body",
         )
         self.add_to_library(self.paper)
         self.url = reverse(
@@ -1026,10 +1095,9 @@ class PaperTranslateAPITest(AuthenticatedAPITestCase):
     def test_existing_translation_requires_force_to_regenerate(self, enqueue_mock):
         Translation.objects.create(
             paper=self.paper,
-            summary=self.summary,
-            translation_type=Translation.TranslationType.SUMMARY,
-            source_text="English summary",
-            translated_text="한국어 요약",
+            translation_type=Translation.TranslationType.FULL_TEXT,
+            source_text="# Introduction\n\nFull paper body",
+            translated_text="# 서론\n\n전체 논문 본문",
             target_language="ko",
             model_name="translation-model",
             chunk_count=1,
@@ -1051,8 +1119,8 @@ class PaperTranslateAPITest(AuthenticatedAPITestCase):
         enqueue_mock.assert_called_once_with(forced_response.data["job"]["id"])
 
     @patch("scholar.views.enqueue_translation_job")
-    def test_translate_requires_summary_and_supported_language(self, enqueue_mock):
-        self.summary.delete()
+    def test_translate_requires_sections_and_supported_language(self, enqueue_mock):
+        self.paper.sections.all().delete()
         missing_response = self.client.post(self.url, {}, format="json")
         invalid_response = self.client.post(
             self.url,
@@ -1064,19 +1132,18 @@ class PaperTranslateAPITest(AuthenticatedAPITestCase):
         self.assertEqual(invalid_response.status_code, status.HTTP_400_BAD_REQUEST)
         enqueue_mock.assert_not_called()
 
-    @patch("scholar.services.translation_service.generate_summary_translation")
+    @patch("scholar.services.translation_service.generate_full_text_translation")
     def test_translation_worker_completes_job(self, generate_mock):
         from .jobs import _run_translation_job
 
         translation = Translation.objects.create(
             paper=self.paper,
-            summary=self.summary,
-            translation_type=Translation.TranslationType.SUMMARY,
-            source_text="English summary",
-            translated_text="한국어 요약",
+            translation_type=Translation.TranslationType.FULL_TEXT,
+            source_text="# Introduction\n\nFull paper body",
+            translated_text="# 서론\n\n전체 논문 본문",
             target_language="ko",
             model_name="translation-model",
-            chunk_count=1,
+            chunk_count=3,
         )
         generate_mock.return_value = translation
         job = ProcessingJob.objects.create(
@@ -1090,10 +1157,11 @@ class PaperTranslateAPITest(AuthenticatedAPITestCase):
 
         generate_mock.assert_called_once_with(self.paper)
         self.assertEqual(job.status, ProcessingJob.Status.COMPLETED)
-        self.assertEqual(job.progress_current, 1)
+        self.assertEqual(job.progress_current, 3)
+        self.assertEqual(job.progress_total, 3)
         self.assertEqual(job.model_name, "translation-model")
 
-    @patch("scholar.services.translation_service.generate_summary_translation")
+    @patch("scholar.services.translation_service.generate_full_text_translation")
     def test_translation_worker_records_failure(self, generate_mock):
         from .jobs import _run_translation_job
 
@@ -1366,6 +1434,14 @@ class PaperWorkflowIntegrationTest(AuthenticatedAPITestCase):
             section_count=1,
             chunk_count=1,
         )
+        Translation.objects.create(
+            paper=paper,
+            summary=summary,
+            translation_type=Translation.TranslationType.SUMMARY,
+            source_text=summary.summary_text,
+            translated_text="통합 요약",
+            target_language="ko",
+        )
         summary_response = self.client.get(
             reverse(
                 "scholar:paper-summary",
@@ -1382,16 +1458,17 @@ class PaperWorkflowIntegrationTest(AuthenticatedAPITestCase):
         )
         Translation.objects.create(
             paper=paper,
-            summary=summary,
-            source_text=summary.summary_text,
-            translated_text="통합 요약",
+            translation_type=Translation.TranslationType.FULL_TEXT,
+            source_text="# Method\n\nGrounded workflow evidence.",
+            translated_text="# 방법\n\n근거가 있는 워크플로 증거입니다.",
             target_language="ko",
         )
         translations_response = self.client.get(
             reverse(
                 "scholar:paper-translations",
                 kwargs={"arxiv_id": paper.arxiv_id},
-            )
+            ),
+            {"type": "full_text", "target_language": "ko"},
         )
         answer_mock.return_value = {
             "arxiv_id": paper.arxiv_id,
@@ -1413,8 +1490,12 @@ class PaperWorkflowIntegrationTest(AuthenticatedAPITestCase):
         self.assertEqual(detail_response.data["section_count"], 1)
         self.assertEqual(summarize_response.status_code, status.HTTP_202_ACCEPTED)
         self.assertEqual(summary_response.data["summary_text"], "Integrated summary")
+        self.assertEqual(summary_response.data["translated_text"], "통합 요약")
         self.assertEqual(translate_response.status_code, status.HTTP_202_ACCEPTED)
-        self.assertEqual(translations_response.data[0]["translated_text"], "통합 요약")
+        self.assertEqual(
+            translations_response.data[0]["translated_text"],
+            "# 방법\n\n근거가 있는 워크플로 증거입니다.",
+        )
         self.assertEqual(question_response.status_code, status.HTTP_200_OK)
         self.assertEqual(question_response.data["sources"][0]["index"], 1)
         summary_enqueue_mock.assert_called_once()

@@ -162,8 +162,11 @@ export function summarizePaper(arxivId, force = false) {
   })
 }
 
-export async function getPaperTranslations(arxivId) {
-  const payload = await request(`/papers/${encodeURIComponent(arxivId)}/translations/`)
+export async function getPaperTranslations(arxivId, type = 'full_text') {
+  const query = new URLSearchParams({ type, target_language: 'ko' })
+  const payload = await request(
+    `/papers/${encodeURIComponent(arxivId)}/translations/?${query.toString()}`,
+  )
   return unwrapListResponse(payload)
 }
 

@@ -10,7 +10,7 @@ from ..models import Paper, Translation
 logger = logging.getLogger(__name__)
 
 # 마크다운 및 토큰 보존용 학술 프롬프트
-TRANSLATION_PROMPT = """Translate the following academic paper summary from English to Korean.
+SUMMARY_TRANSLATION_PROMPT = """Translate the following academic paper summary from English to Korean.
 Return only the complete Korean translation.
 Do not summarize, omit, or add information.
 Preserve paragraph structure, Markdown, model names, dataset names, citations, numbers, and formulas.
@@ -19,8 +19,22 @@ Do not modify __APRAG_PROTECTED_000000__ style protected tokens.
 [English summary]
 """
 
+FULL_TEXT_TRANSLATION_PROMPT = """Translate the following academic paper text from English to Korean.
+Return only the complete Korean translation.
+Do not summarize, omit, or add information.
+Preserve section headings, paragraph structure, Markdown, model names, dataset names, citations, numbers, and formulas.
+Do not translate bibliography entries or modify __APRAG_PROTECTED_000000__ style protected tokens.
 
-def _translate_without_markup_tokens(service, protection, token_pattern) -> str:
+[English paper text]
+"""
+
+
+def _translate_without_markup_tokens(
+    service,
+    protection,
+    token_pattern,
+    translation_prompt: str,
+) -> str:
     """토큰을 지키지 못하는 모델에서는 텍스트 조각만 번역해 원문 수식을 끼워 넣는다."""
     tokens = tuple(token_pattern.findall(protection.text))
     text_parts = token_pattern.split(protection.text)
@@ -29,7 +43,7 @@ def _translate_without_markup_tokens(service, protection, token_pattern) -> str:
     for index, text_part in enumerate(text_parts):
         if text_part.strip():
             output.append(
-                service.translate(f"{TRANSLATION_PROMPT}\n{text_part.strip()}").strip()
+                service.translate(f"{translation_prompt}\n{text_part.strip()}").strip()
             )
         if index < len(tokens):
             output.append(protection.replacements[tokens[index]])
@@ -37,7 +51,12 @@ def _translate_without_markup_tokens(service, protection, token_pattern) -> str:
     return "\n\n".join(part for part in output if part)
 
 
-def translate_chunk_preserving_markup(service, chunk: str) -> str:
+def translate_chunk_preserving_markup(
+    service,
+    chunk: str,
+    *,
+    translation_prompt: str = SUMMARY_TRANSLATION_PROMPT,
+) -> str:
     """수식·표 토큰을 보존해 번역하고, 토큰 훼손 시 결정적인 조각 번역으로 복구한다."""
     from src.services.translation_markdown_service import (
         PROTECTED_TOKEN_PATTERN,
@@ -48,7 +67,7 @@ def translate_chunk_preserving_markup(service, chunk: str) -> str:
 
     protection = protect_translation_markup(chunk)
     required_tokens = " ".join(protection.token_order)
-    prompt = f"{TRANSLATION_PROMPT}\n{protection.text}"
+    prompt = f"{translation_prompt}\n{protection.text}"
     if required_tokens:
         prompt = (
             f"{prompt}\n\nEvery protected token below must appear exactly once and in this order:\n"
@@ -63,7 +82,7 @@ def translate_chunk_preserving_markup(service, chunk: str) -> str:
         except TranslationMarkupError:
             if attempt + 1 < markup_attempts:
                 prompt = (
-                    f"{TRANSLATION_PROMPT}\n"
+                    f"{translation_prompt}\n"
                     "Your previous response changed or omitted protected tokens. "
                     "Copy every required token verbatim, exactly once, in the original order.\n\n"
                     f"{protection.text}\n\nRequired tokens:\n{required_tokens}"
@@ -75,7 +94,29 @@ def translate_chunk_preserving_markup(service, chunk: str) -> str:
         service,
         protection,
         PROTECTED_TOKEN_PATTERN,
+        translation_prompt,
     )
+
+
+def _translate_markdown(source_text: str, *, translation_prompt: str):
+    from src.services.translation_markdown_service import split_markdown
+    from src.services.translation_service import TranslateService
+
+    service = TranslateService()
+    service.ensure_available()
+    chunks = split_markdown(source_text, max_chars=service.chunk_chars)
+    if not chunks:
+        raise ValueError("번역할 내용이 없습니다.")
+
+    translated_chunks = [
+        translate_chunk_preserving_markup(
+            service,
+            chunk,
+            translation_prompt=translation_prompt,
+        )
+        for chunk in chunks
+    ]
+    return service, chunks, "\n\n".join(translated_chunks)
 
 
 def generate_summary_translation(
@@ -88,28 +129,58 @@ def generate_summary_translation(
         raise ValueError("현재 지원하는 번역 대상 언어는 한국어(ko)입니다.")
 
     from src.services.django_paper_repository import upsert_translation
-    from src.services.translation_markdown_service import split_markdown
-    from src.services.translation_service import TranslateService
-
     summary = paper.summary
-    service = TranslateService()
-    service.ensure_available()
-    chunks = split_markdown(
+    service, chunks, translated_text = _translate_markdown(
         summary.summary_text,
-        max_chars=service.chunk_chars,
+        translation_prompt=SUMMARY_TRANSLATION_PROMPT,
     )
-    if not chunks:
-        raise ValueError("번역할 요약 내용이 없습니다.")
-
-    translated_chunks = []
-    for chunk in chunks:
-        translated_chunks.append(translate_chunk_preserving_markup(service, chunk))
 
     translation, _created = upsert_translation(
         paper.arxiv_id,
         source_text=summary.summary_text,
-        translated_text="\n\n".join(translated_chunks),
+        translated_text=translated_text,
         translation_type=Translation.TranslationType.SUMMARY,
+        source_language="en",
+        target_language=target_language,
+        model_name=service.model,
+        chunk_count=len(chunks),
+    )
+    return translation
+
+
+def generate_full_text_translation(
+    paper: Paper,
+    *,
+    target_language: str = "ko",
+) -> Translation:
+    """추출된 논문 본문 전체를 섹션 구조를 유지해 번역하고 저장합니다."""
+    if target_language != "ko":
+        raise ValueError("현재 지원하는 번역 대상 언어는 한국어(ko)입니다.")
+
+    from src.services.django_paper_repository import upsert_translation
+
+    sections = list(paper.sections.order_by("section_order"))
+    source_parts = []
+    for section in sections:
+        text = section.section_text.strip()
+        if not text:
+            continue
+        title = section.section_title.strip()
+        source_parts.append(f"# {title}\n\n{text}" if title else text)
+
+    source_text = "\n\n".join(source_parts)
+    if not source_text:
+        raise ValueError("번역할 본문 섹션이 없습니다.")
+
+    service, chunks, translated_text = _translate_markdown(
+        source_text,
+        translation_prompt=FULL_TEXT_TRANSLATION_PROMPT,
+    )
+    translation, _created = upsert_translation(
+        paper.arxiv_id,
+        source_text=source_text,
+        translated_text=translated_text,
+        translation_type=Translation.TranslationType.FULL_TEXT,
         source_language="en",
         target_language=target_language,
         model_name=service.model,

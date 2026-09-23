@@ -160,11 +160,11 @@ function SummaryTab({ summary, job, canSummarize, onGenerate }) {
     <div className="summary-tab">
       <div className="artifact-actions">
         <div>
-          <strong>{job ? statusLabels[job.status] : '논문 요약'}</strong>
+          <strong>{job ? statusLabels[job.status] : '한국어 논문 요약'}</strong>
           <span>
             {job?.status === 'failed'
               ? job.error_message
-              : '추출된 본문을 기반으로 최종 요약을 생성합니다.'}
+              : '추출된 본문을 요약하고 한국어로 번역합니다.'}
           </span>
         </div>
         <button
@@ -184,11 +184,13 @@ function SummaryTab({ summary, job, canSummarize, onGenerate }) {
       {summary && (
         <section className="summary-card">
           <div className="artifact-meta">
-            <span>모델 {summary.model_name || '정보 없음'}</span>
+            <span>모델 {summary.translation_model_name || summary.model_name || '정보 없음'}</span>
             <span>섹션 {summary.section_count}개</span>
-            <span>청크 {summary.chunk_count}개</span>
+            <span>번역 청크 {summary.translation_chunk_count || 0}개</span>
           </div>
-          <MarkdownContent text={summary.summary_text} />
+          {summary.translated_text
+            ? <MarkdownContent text={summary.translated_text} />
+            : <div className="artifact-empty">한국어 요약이 없습니다. 요약을 다시 생성해 주세요.</div>}
         </section>
       )}
     </div>
@@ -207,11 +209,11 @@ function TranslationsTab({ translations, job, canTranslate, onGenerate }) {
     <div className="translation-tab">
       <div className="artifact-actions">
         <div>
-          <strong>{job ? statusLabels[job.status] : '요약 번역'}</strong>
+          <strong>{job ? statusLabels[job.status] : '논문 전체 번역'}</strong>
           <span>
             {job?.status === 'failed'
               ? job.error_message
-              : '최종 논문 요약을 한국어로 번역합니다.'}
+              : '추출된 논문 본문 전체를 한국어로 번역합니다.'}
           </span>
         </div>
         <button
@@ -223,11 +225,11 @@ function TranslationsTab({ translations, job, canTranslate, onGenerate }) {
             ? '번역 중…'
             : translations.length > 0
               ? '번역 다시 생성'
-              : '한국어 번역 생성'}
+              : '전체 한국어 번역 생성'}
         </button>
       </div>
       {!canTranslate && (
-        <div className="artifact-empty">번역하려면 먼저 요약을 생성해야 합니다.</div>
+        <div className="artifact-empty">번역하려면 먼저 본문을 추출해야 합니다.</div>
       )}
       {canTranslate && translations.length === 0 && !isRunning && (
         <div className="artifact-empty">아직 생성된 번역 결과가 없습니다.</div>
@@ -553,7 +555,7 @@ export default function PaperDetail({ paper, loading, onPaperUpdated }) {
           <TranslationsTab
             translations={paperArtifacts.translations || []}
             job={translationJob}
-            canTranslate={Boolean(paper.has_summary || paperArtifacts.summary)}
+            canTranslate={paper.section_count > 0}
             onGenerate={generateTranslation}
           />
         )}

@@ -155,8 +155,10 @@ def _run_summary_job(job_id: int) -> None:
         )
 
         from .services.summary_service import generate_paper_summary
+        from .services.translation_service import generate_summary_translation
 
         summary = generate_paper_summary(job.paper)
+        generate_summary_translation(job.paper)
         job.status = ProcessingJob.Status.COMPLETED
         job.progress_current = 1
         job.model_name = summary.model_name
@@ -165,6 +167,7 @@ def _run_summary_job(job_id: int) -> None:
             update_fields=(
                 "status",
                 "progress_current",
+                "progress_total",
                 "model_name",
                 "completed_at",
             )
@@ -198,17 +201,19 @@ def _run_translation_job(job_id: int) -> None:
             )
         )
 
-        from .services.translation_service import generate_summary_translation
+        from .services.translation_service import generate_full_text_translation
 
-        translation = generate_summary_translation(job.paper)
+        translation = generate_full_text_translation(job.paper)
         job.status = ProcessingJob.Status.COMPLETED
-        job.progress_current = 1
+        job.progress_current = translation.chunk_count
+        job.progress_total = translation.chunk_count
         job.model_name = translation.model_name
         job.completed_at = timezone.now()
         job.save(
             update_fields=(
                 "status",
                 "progress_current",
+                "progress_total",
                 "model_name",
                 "completed_at",
             )

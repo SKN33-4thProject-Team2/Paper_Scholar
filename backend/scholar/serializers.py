@@ -108,15 +108,48 @@ class PaperSectionSerializer(serializers.ModelSerializer):
 
 class PaperSummarySerializer(serializers.ModelSerializer):
     arxiv_id = serializers.CharField(source="paper.arxiv_id", read_only=True)
+    translated_text = serializers.SerializerMethodField()
+    translation_model_name = serializers.SerializerMethodField()
+    translation_chunk_count = serializers.SerializerMethodField()
+
+    @staticmethod
+    def _korean_translation(summary):
+        if hasattr(summary, "_korean_translation_cache"):
+            return summary._korean_translation_cache
+        prefetched = getattr(summary, "korean_translations", None)
+        if prefetched is not None:
+            translation = prefetched[0] if prefetched else None
+        else:
+            translation = summary.translations.filter(
+                translation_type=Translation.TranslationType.SUMMARY,
+                target_language="ko",
+            ).first()
+        summary._korean_translation_cache = translation
+        return translation
+
+    def get_translated_text(self, summary):
+        translation = self._korean_translation(summary)
+        return translation.translated_text if translation else ""
+
+    def get_translation_model_name(self, summary):
+        translation = self._korean_translation(summary)
+        return translation.model_name if translation else ""
+
+    def get_translation_chunk_count(self, summary):
+        translation = self._korean_translation(summary)
+        return translation.chunk_count if translation else 0
 
     class Meta:
         model = PaperSummary
         fields = (
             "arxiv_id",
             "summary_text",
+            "translated_text",
             "model_name",
+            "translation_model_name",
             "section_count",
             "chunk_count",
+            "translation_chunk_count",
             "created_at",
             "updated_at",
         )
