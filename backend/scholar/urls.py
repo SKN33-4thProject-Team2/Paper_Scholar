@@ -18,6 +18,7 @@ from .views import (
     ProcessingJobDetailAPIView,
     RegisterAPIView,
     health_check,
+    readiness_check,
 )
 
 app_name = "scholar"
@@ -41,6 +42,7 @@ class ArxivIdConverter:
 register_converter(ArxivIdConverter, "arxiv")
 
 urlpatterns = [
+    path("ready/", readiness_check, name="readiness"),
     # 헬스 체크
     path("health", health_check, name="health-noslash"),
     path("health/", health_check, name="health"),

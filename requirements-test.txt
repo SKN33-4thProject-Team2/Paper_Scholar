@@ -1,0 +1,15 @@
+# Lightweight offline API/graph regression suite; no embedding/GPU downloads.
+Django>=5.2,<5.3
+djangorestframework>=3.15,<4
+djangorestframework-simplejwt>=5.3,<6
+django-cors-headers>=4.7,<5
+python-dotenv>=1,<2
+PyMySQL>=1.1,<2
+pydantic>=2.10,<3
+langgraph>=1.2,<2
+langchain-openai>=1.6,<2
+langsmith>=0.14,<1
+arxiv>=2.1,<5
+requests>=2.32,<3
+beautifulsoup4>=4.13,<5
+PyYAML>=6,<7
