@@ -234,6 +234,7 @@ class SupervisorRun(models.Model):
         choices=Status.choices,
         default=Status.PENDING,
     )
+    context = models.JSONField(default=dict, blank=True)
     plan = models.JSONField(default=list, blank=True)
     node_history = models.JSONField(default=list, blank=True)
     response = models.TextField(blank=True)

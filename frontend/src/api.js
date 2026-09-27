@@ -219,3 +219,19 @@ export function createSupervisorPlan(message) {
     body: JSON.stringify({ message }),
   })
 }
+
+export function createSupervisorRun(message, threadId) {
+  return request('/supervisor/runs/', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ message, ...(threadId ? { thread_id: threadId } : {}) }),
+  })
+}
+
+export function getSupervisorRuns() {
+  return request('/supervisor/runs/')
+}
+
+export function getSupervisorRun(id) {
+  return request(`/supervisor/runs/${encodeURIComponent(id)}/`)
+}

@@ -1,7 +1,7 @@
 from django.urls import path, register_converter
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 
-from .supervisor_views import SupervisorPlanAPIView
+from .supervisor_views import SupervisorPlanAPIView, SupervisorRunAPIView, SupervisorRunDetailAPIView
 from .views import (
     ArxivSearchAPIView,
     CurrentUserAPIView,
@@ -44,6 +44,9 @@ urlpatterns = [
     # 헬스 체크
     path("health", health_check, name="health-noslash"),
     path("health/", health_check, name="health"),
+
+    path("supervisor/runs/", SupervisorRunAPIView.as_view(), name="supervisor-runs"),
+    path("supervisor/runs/<int:pk>/", SupervisorRunDetailAPIView.as_view(), name="supervisor-run-detail"),
 
     # DeepSearch 플랜
     path("supervisor/plan", SupervisorPlanAPIView.as_view(), name="supervisor-plan-noslash"),

@@ -130,11 +130,13 @@ def save_papers_and_create_jobs(
 
 def run_arxiv_search(query: str, max_results: int, sort_by: str) -> list[dict]:
     """기존 ArxivSearchBot의 제목 검색 기능을 HTTP 계층에서 호출합니다."""
+    from src.services.search_intent import search_keywords
+    return search_with_keywords(search_keywords(query), max_results, sort_by)
+
+
+def search_with_keywords(keywords, max_results, sort_by):
     from src.feature.search import ArxivSearchBot
-
-    from src.services.search_intent import build_search_query, search_keywords
-
-    keywords = search_keywords(query)
+    from src.services.search_intent import build_search_query
     bot = ArxivSearchBot()
     papers = bot.search_papers(
         final_query=build_search_query(keywords),

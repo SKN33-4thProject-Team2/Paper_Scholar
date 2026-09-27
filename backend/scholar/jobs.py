@@ -49,23 +49,20 @@ def _run_supervisor_run(run_id: int) -> None:
         run.error_message = ""
         run.save(update_fields=("status", "started_at", "error_message"))
 
-        from .supervisor_service import run_supervisor, summarize_result
-
-        result = summarize_result(
-            run_supervisor(run.query, thread_id=run.thread_id)
-        )
-
-        run.response = result["response"]
-        run.node_history = result["node_history"]
-        run.papers = result["papers"]
-        run.sources = result["sources"]
-        if result["needs_input"]:
-            run.status = SupervisorRun.Status.NEEDS_INPUT
-        elif result["errors"]:
+        from .web_graph import run_web_graph
+        result = run_web_graph(run)
+        run.response = result.get("response", "")
+        run.node_history = result.get("node_history", [])
+        run.papers = result.get("search_results", [])
+        run.sources = result.get("sources", [])
+        if result.get("errors"):
             run.status = SupervisorRun.Status.FAILED
-            run.error_message = " | ".join(str(item) for item in result["errors"])
+            run.error_message = " | ".join(result["errors"])
+        elif result.get("human_input_required"):
+            run.status = SupervisorRun.Status.NEEDS_INPUT
         else:
             run.status = SupervisorRun.Status.COMPLETED
+
         run.completed_at = timezone.now()
         run.save(
             update_fields=(
