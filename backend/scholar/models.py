@@ -196,6 +196,7 @@ class ProcessingJob(models.Model):
     progress_total = models.PositiveIntegerField(default=0)
     model_name = models.CharField(max_length=200, blank=True)
     error_message = models.TextField(blank=True)
+    heartbeat_at = models.DateTimeField(null=True, blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -242,6 +243,7 @@ class SupervisorRun(models.Model):
     sources = models.JSONField(default=list, blank=True)
     error_message = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
+    heartbeat_at = models.DateTimeField(null=True, blank=True)
     started_at = models.DateTimeField(null=True, blank=True)
     completed_at = models.DateTimeField(null=True, blank=True)
 
