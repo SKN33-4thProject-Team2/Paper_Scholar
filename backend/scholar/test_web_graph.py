@@ -67,3 +67,71 @@ class SupervisorRunAPITests(APITestCase):
         self.client.force_authenticate(other)
         self.assertEqual(self.client.get(f'/api/supervisor/runs/{run_id}/').status_code, 404)
         self.assertEqual(self.client.get('/api/supervisor/runs/').data, [])
+
+
+class SearchEntryPointTests(APITestCase):
+    def setUp(self):
+        self.client.force_authenticate(get_user_model().objects.create_user(username='search-user'))
+
+    @patch('src.feature.search.ArxivSearchBot')
+    def test_plain_search_normalizes_korean_and_preserves_versions(self, bot):
+        bot.return_value.search_papers.return_value = []
+        cases = {
+            '대용량 언어 모델에 관한 모델 찾아줘': 'large language model',
+            'LLM에 관한 논문 찾아줘': 'large language model',
+            'RAG 관련 검색': 'retrieval augmented generation',
+            '반도체 관련 검색': 'semiconductor',
+            'GPT-4 관련 검색': 'GPT-4',
+        }
+        for text, expected in cases.items():
+            with self.subTest(text=text):
+                response = self.client.post('/api/search/', {'query': text}, format='json')
+                self.assertEqual(response.status_code, 200)
+                query = bot.return_value.search_papers.call_args.kwargs['final_query']
+                self.assertIn(expected, query)
+                self.assertNotIn('관련', query)
+                self.assertNotIn('찾아', query)
+
+    @patch('src.services.search_intent._keyword_model', side_effect=RuntimeError('offline'))
+    def test_failed_conversion_returns_actionable_error(self, model):
+        response = self.client.post('/api/search/', {'query': '미지의 한국어 연구 주제 관련 검색'})
+        self.assertEqual(response.status_code, 400)
+        self.assertIn('변환하지 못했습니다', response.data['detail'])
+
+
+class WebPipelineTests(TestCase):
+    setUp = WebGraphTests.setUp
+    run_turn = WebGraphTests.run_turn
+
+    @patch('scholar.services.translation_service.generate_summary_translation')
+    @patch('scholar.services.summary_service.generate_paper_summary')
+    @patch('scholar.jobs.extract_paper_content')
+    @patch('scholar.views.search_with_keywords')
+    def test_search_summary_then_contextual_translation(self, search, extract, summarize, translate):
+        from .models import PaperSection, PaperSummary
+        search.return_value = self.papers
+
+        def extracted(arxiv_id):
+            paper = Paper.objects.get(arxiv_id=arxiv_id)
+            PaperSection.objects.create(paper=paper, section_order=1, section_title='Body', section_text='body')
+            return 1
+
+        def summarized(paper):
+            return PaperSummary.objects.create(paper=paper, summary_text='summary')
+
+        extract.side_effect = extracted
+        summarize.side_effect = summarized
+        self.run_turn('LLM 관련 논문 2편 찾아줘')
+        result = self.run_turn('두 번째 논문 요약해줘')
+        self.assertFalse(result.get('errors'))
+        extract.assert_called_once_with('1234.00002')
+        self.assertEqual(summarize.call_count, 1)
+        result = self.run_turn('그거 번역해줘')
+        self.assertFalse(result.get('errors'))
+        self.assertIn('번역', result['response'])
+        translate.assert_called_once()
+        self.assertEqual(translate.call_args.args[0].arxiv_id, '1234.00002')
+        # Existing extraction and summary are reused on the next turn.
+        self.assertEqual(extract.call_count, 1)
+        self.assertEqual(summarize.call_count, 1)
+        self.assertEqual(search.call_count, 1)

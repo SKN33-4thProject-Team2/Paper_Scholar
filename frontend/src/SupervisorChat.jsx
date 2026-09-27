@@ -18,8 +18,9 @@ export default function SupervisorChat({ onSaved }) {
     let cancelled = false
     getSupervisorRuns().then((history) => {
       if (cancelled) return
-      setRuns([...history].reverse())
-      setThreadId(history[0]?.thread_id || null)
+      const latestThread = history[0]?.thread_id || null
+      setRuns(history.filter((run) => run.thread_id === latestThread).reverse())
+      setThreadId(latestThread)
     }).catch((err) => { if (!cancelled) setError(err.message) })
       .finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }

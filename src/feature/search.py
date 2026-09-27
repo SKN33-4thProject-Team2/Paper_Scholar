@@ -137,10 +137,16 @@ class ArxivSearchBot:
         self.db_file = str(LIBRARY_DB) if LIBRARY_DB else os.path.join(self.data_dir, "saved_papers.db")
         self.json_file = os.path.join(self.data_dir, "saved_papers.json")
         self.model_name = model_name
-        self.llm = create_safe_chat_model(self.model_name, temperature=0.0)
+        self._llm = None
 
         self.logger = AppLogger(__name__)
         self.init_db()
+
+    @property
+    def llm(self):
+        if self._llm is None:
+            self._llm = create_safe_chat_model(self.model_name, temperature=0.0)
+        return self._llm
 
     def init_db(self) -> None:
         """기존 스키마 규격을 준수하여 papers 테이블을 생성한다."""

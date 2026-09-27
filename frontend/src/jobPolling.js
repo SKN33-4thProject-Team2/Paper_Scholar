@@ -12,7 +12,7 @@ export function startJobPolling({ fetchJob, fetchArtifact, onArtifact, onJob, on
         if (cancelled) return
         onArtifact(artifact)
         onJob(job)
-        onComplete?.()
+        Promise.resolve(onComplete?.()).catch(onError)
         return
       }
       onJob(job)

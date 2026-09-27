@@ -14,6 +14,8 @@ cd "$PROJECT_DIR"
 "$PYTHON_BIN" backend/manage.py check --settings=django_config.test_settings
 "$PYTHON_BIN" backend/manage.py test scholar --settings=django_config.test_settings
 "$PYTHON_BIN" -m unittest \
+  tests.test_search_intent \
+  tests.test_deploy_backend \
   tests.test_search_list_repository \
   tests.test_v2_mysql_sync \
   tests.test_orchestration \
@@ -23,4 +25,5 @@ cd "$PROJECT_DIR"
 
 cd frontend
 npm run lint
+node --test tests/*.test.js
 npm run build
