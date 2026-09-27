@@ -150,18 +150,10 @@ class KeywordNode:
                 "이전 검색 결과가 없었습니다. 같은 의미를 유지하되 "
                 f"다음 표현과 겹치지 않는 대체 학술 용어를 생성하세요: {previous}"
             )
-        try:
-            result = self.tool.generate_keywords(topic)
-            keywords = [
-                str(item) for item in result.get("keywords", []) if str(item).strip()
-            ]
-        except Exception:
-            # 모델을 쓸 수 없어도 검색 자체는 막지 않는다.
-            keywords = []
+        result = self.tool.generate_keywords(topic)
+        keywords = [str(item).strip() for item in result.get("keywords", []) if str(item).strip()]
         if not keywords:
-            keywords = _fallback_keywords(state["query"])
-        if not keywords:
-            raise NodeExecutionError("검색 키워드를 생성하지 못했습니다.")
+            raise NodeExecutionError("검색 키워드를 생성하지 못했습니다. 주제를 다시 입력해 주세요.")
         return {"keywords": keywords, "node_history": ["keyword"]}
 
 

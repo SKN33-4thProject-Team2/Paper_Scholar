@@ -94,66 +94,12 @@ def _get_keyword_llm():
 @tool("generate_arxiv_keywords", args_schema=KeywordInput)
 def generate_arxiv_keywords(user_query: str) -> dict:
     """사용자의 질의를 기반으로 arXiv 논문 탐색에 가장 적합한 핵심 학술 영문 키워드 3~5개를 초고속으로 생성합니다."""
-    clean_query = user_query.strip()
-    if not clean_query:
-        raise KeywordToolError("입력된 검색 주제가 비어있습니다.")
+    from src.services.search_intent import search_keywords
 
-    code_start = getattr(LogCode, "KEYWORD_GENERATION_STARTED", "KEYWORD_GENERATION_STARTED")
-    logger.log(code_start, query=clean_query, model=FAST_KEYWORD_MODEL)
-
-    start_time = time.time()
-
-    prompt = (
-        f"You are an expert academic paper search assistant.\n"
-        f"Analyze the user's research topic and extract 3 to 5 precise, highly relevant "
-        f"English academic keywords/terms specifically suited for arXiv paper titles and abstracts.\n\n"
-        f"User Topic: {clean_query}\n\n"
-        f"Rules:\n"
-        f"- Return only standard academic terms in English.\n"
-        f"- Do NOT use overly generic words (e.g., 'paper', 'research', 'study').\n"
-        f"- Order by relevance (most core concept first)."
-    )
-
-    try:
-        # gpt-4o-mini 기반 고속 구조화 출력
-        result: ArxivKeywords = _get_keyword_llm().invoke(prompt)
-        extracted_keywords = result.keywords[:4]  # 429 방어를 위해 최대 4개로 제한
-
-        elapsed = round(time.time() - start_time, 2)
-        code_succ = getattr(LogCode, "KEYWORD_GENERATION_SUCCEEDED", "KEYWORD_GENERATION_SUCCEEDED")
-        logger.log(
-            code_succ,
-            query=clean_query,
-            keywords=extracted_keywords,
-            keyword_count=len(extracted_keywords),
-            duration_sec=elapsed
-        )
-
-        return {
-            "query": clean_query,
-            "keywords": extracted_keywords,
-            "duration_sec": elapsed
-        }
-
-    except Exception as e:
-        elapsed = round(time.time() - start_time, 2)
-        code_fail = getattr(LogCode, "KEYWORD_GENERATION_FAILED", "KEYWORD_GENERATION_FAILED")
-        logger.log(
-            code_fail,
-            query=clean_query,
-            error=str(e),
-            error_type=type(e).__name__,
-            duration_sec=elapsed
-        )
-
-        # 장애 발생 시 단어 직접 추출 Fallback
-        fallback_keywords = [clean_query]
-        print(f"[Warning] 키워드 생성 실패로 기본 키워드 사용: {fallback_keywords} (사유: {e})")
-        return {
-            "query": clean_query,
-            "keywords": fallback_keywords,
-            "duration_sec": elapsed
-        }
+    start = time.monotonic()
+    keywords = search_keywords(user_query)
+    return {"query": user_query, "keywords": keywords,
+            "duration_sec": round(time.monotonic() - start, 2)}
 
 
 # ---------------------------------------------------------------------

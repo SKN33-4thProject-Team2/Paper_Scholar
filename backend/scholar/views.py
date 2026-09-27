@@ -132,10 +132,12 @@ def run_arxiv_search(query: str, max_results: int, sort_by: str) -> list[dict]:
     """기존 ArxivSearchBot의 제목 검색 기능을 HTTP 계층에서 호출합니다."""
     from src.feature.search import ArxivSearchBot
 
-    clean_query = query.strip().replace('"', "")
+    from src.services.search_intent import build_search_query, search_keywords
+
+    keywords = search_keywords(query)
     bot = ArxivSearchBot()
     papers = bot.search_papers(
-        final_query=f'ti:"{clean_query}"',
+        final_query=build_search_query(keywords),
         sort_by=sort_by,
         max_results=max_results,
     )

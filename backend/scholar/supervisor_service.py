@@ -81,18 +81,9 @@ class SupervisorPlanner:
         if related_count:
             result_count = related_count + 1
 
-        topic_match = re.match(r"\s*(.+?)\s*논문(?:을|를|이|가|과|와|은|는|\s)", message)
-        if topic_match:
-            query = topic_match.group(1).strip()
-        else:
-            cleaned = _ACTION_TEXT.sub(" ", message)
-            cleaned = re.sub(
-                r"\d+\s*(?:개|편|papers?)?",
-                " ",
-                cleaned,
-                flags=re.IGNORECASE,
-            )
-            query = re.sub(r"\s+", " ", cleaned).strip(" ,.!?를을은는이가")
+        from src.services.search_intent import extract_topic
+
+        query = extract_topic(message)
 
         summarize = "요약" in message or "summar" in message.casefold()
         translate = "번역" in message or "translat" in message.casefold()
@@ -118,7 +109,9 @@ class SupervisorPlanner:
         try:
             structured = self.llm.with_structured_output(SupervisorIntent)
             intent = structured.invoke(prompt)
-        except Exception:
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("Supervisor intent fallback (%s)", type(exc).__name__)
             intent = self._fallback_intent(message)
 
         related_match = _RELATED_PATTERN.search(message)
@@ -134,7 +127,8 @@ class SupervisorPlanner:
             raise ValueError("요청을 입력해 주세요.")
 
         intent = self._parse_intent(clean_message)
-        query = re.sub(r"\s+", " ", str(intent.query or "")).strip()
+        from src.services.search_intent import extract_topic
+        query = extract_topic(str(intent.query or ""))
         ambiguity_key = re.sub(
             r"\b(?:논문|paper|papers)\b",
             "",
