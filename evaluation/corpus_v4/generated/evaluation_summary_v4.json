@@ -1,0 +1,63 @@
+{
+  "total_cases": 200,
+  "execution_errors": 0,
+  "overall": {
+    "faithfulness": {
+      "mean": 0.7859,
+      "n": 142
+    },
+    "answer_relevancy": {
+      "mean": 0.632,
+      "n": 200
+    },
+    "page_recall_at_k": {
+      "mean": 0.45,
+      "n": 200
+    },
+    "page_reciprocal_rank": {
+      "mean": 0.2885,
+      "n": 200
+    },
+    "citation_precision": {
+      "mean": 0.0,
+      "n": 142
+    }
+  },
+  "by_topic": {
+    "deep_learning": {
+      "faithfulness": 0.8786,
+      "answer_relevancy": 0.655,
+      "page_recall_at_k": 0.5,
+      "page_reciprocal_rank": 0.3183,
+      "citation_precision": 0.0
+    },
+    "llm": {
+      "faithfulness": 0.7826,
+      "answer_relevancy": 0.54,
+      "page_recall_at_k": 0.325,
+      "page_reciprocal_rank": 0.2167,
+      "citation_precision": 0.0
+    },
+    "machine_learning": {
+      "faithfulness": 0.7522,
+      "answer_relevancy": 0.545,
+      "page_recall_at_k": 0.45,
+      "page_reciprocal_rank": 0.3175,
+      "citation_precision": 0.0
+    },
+    "rag": {
+      "faithfulness": 0.7,
+      "answer_relevancy": 0.635,
+      "page_recall_at_k": 0.35,
+      "page_reciprocal_rank": 0.1663,
+      "citation_precision": 0.0
+    },
+    "transformer": {
+      "faithfulness": 0.8108,
+      "answer_relevancy": 0.785,
+      "page_recall_at_k": 0.625,
+      "page_reciprocal_rank": 0.4238,
+      "citation_precision": 0.0
+    }
+  }
+}
