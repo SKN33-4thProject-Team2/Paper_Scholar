@@ -823,6 +823,79 @@ class PaperSaveAPITest(AuthenticatedAPITestCase):
         self.assertIsNotNone(job.completed_at)
 
 
+class WebExtractionPersistenceTest(AuthenticatedAPITestCase):
+    """API → worker → extractor → ORM 경로에서 로컬 서재 의존성을 검증합니다."""
+
+    def setUp(self):
+        super().setUp()
+        import tempfile
+        from pathlib import Path
+        from tools import extractor_tool
+        from tests.test_extractor_mysql_sync import ExtractorMySQLSyncTest
+
+        temp = tempfile.TemporaryDirectory()
+        self.addCleanup(temp.cleanup)
+        self.library_path = Path(temp.name) / "missing-library.db"
+        self.sections = [(1, "Introduction", "Extracted body", "<p>Extracted body</p>")]
+        for mock in (
+            patch.object(extractor_tool, "LIBRARY_DB", self.library_path),
+            patch.object(extractor_tool, "EXTRACTED_DB", Path(temp.name) / "sections.db"),
+            patch.object(extractor_tool.ArxivExtractor, "extract", return_value=self.sections),
+            patch.dict("sys.modules", {
+                "services.fulltext_vector_store": ExtractorMySQLSyncTest.vector_store_module(),
+            }),
+        ):
+            mock.start()
+            self.addCleanup(mock.stop)
+        self.paper = Paper.objects.create(arxiv_id="2409.19450", title="LLM paper", authors=[])
+        LibraryEntry.objects.create(user=self.user, paper=self.paper)
+
+    def test_retry_completes_without_legacy_library(self):
+        from .jobs import _run_extraction_job
+
+        ProcessingJob.objects.create(
+            paper=self.paper, user=self.user, job_type=ProcessingJob.JobType.EXTRACT,
+            status=ProcessingJob.Status.FAILED, error_message="서재 선행 등록 필요",
+        )
+        response = self.client.post(
+            reverse("scholar:paper-extract", kwargs={"arxiv_id": self.paper.arxiv_id}),
+            {}, format="json",
+        )
+        self.assertEqual(response.status_code, status.HTTP_202_ACCEPTED)
+        job = ProcessingJob.objects.get(pk=response.data["job"]["id"])
+        _run_extraction_job(job.id)
+        job.refresh_from_db()
+        self.assertEqual(job.status, ProcessingJob.Status.COMPLETED, job.error_message)
+        self.assertEqual(self.paper.sections.get().section_text, "Extracted body")
+        self.assertFalse(self.library_path.exists())
+
+    def test_cache_failure_does_not_fail_web_extraction(self):
+        from .jobs import extract_paper_content
+
+        with patch("tools.extractor_tool.init_schema", side_effect=PermissionError("read only")):
+            self.assertEqual(extract_paper_content(self.paper.arxiv_id), 1)
+        self.assertEqual(self.paper.sections.count(), 1)
+
+    def test_empty_extraction_preserves_existing_sections(self):
+        from .jobs import extract_paper_content
+
+        PaperSection.objects.create(
+            paper=self.paper, section_order=1, section_title="Existing", section_text="Keep",
+        )
+        with patch("tools.extractor_tool.ArxivExtractor.extract", return_value=[]):
+            with self.assertRaisesRegex(ValueError, "추출된 본문 섹션이 없습니다"):
+                extract_paper_content(self.paper.arxiv_id)
+        self.assertEqual(self.paper.sections.get().section_text, "Keep")
+
+    def test_missing_django_paper_fails_before_fetch(self):
+        from .jobs import extract_paper_content
+
+        with patch("tools.extractor_tool.ArxivExtractor.extract") as fetch:
+            with self.assertRaisesRegex(ValueError, "Django 서재에 존재하지 않는"):
+                extract_paper_content("9999.99999")
+        fetch.assert_not_called()
+
+
 class DjangoPaperRepositoryTest(AuthenticatedAPITestCase):
     @classmethod
     def setUpTestData(cls):

@@ -222,49 +222,65 @@ class ArxivExtractor:
         return self.extract_sections(self.fetch_html(paper_id))
 
 
+def _cache_sections(paper_id: str, sections: list) -> None:
+    """기존 CLI와 벡터 검색에서 사용하는 SQLite 본문 캐시를 갱신합니다."""
+    init_schema()
+    with sqlite3.connect(EXTRACTED_DB) as extracted:
+        extracted.execute("DELETE FROM paper_sections WHERE paper_id = ?", (paper_id,))
+        extracted.executemany(
+            "INSERT INTO paper_sections "
+            "(paper_id, section_order, section_title, section_text, section_html) "
+            "VALUES (?, ?, ?, ?, ?)",
+            [(paper_id, order, title, text, fragment) for order, title, text, fragment in sections],
+        )
+
+
 def extract_and_save(paper_id: str, *, require_django_sync: bool = False) -> int:
-    """서재 DB 등록을 검증하고, 추출 DB에 섹션을 적재한 뒤 Chroma 벡터 색인을 즉시 동기화한다.
+    """서재 등록을 검증하고 본문을 저장한 뒤 보조 벡터 색인을 갱신합니다.
 
     Django 비동기 작업에서는 ``require_django_sync``를 켜서 MySQL 저장까지
-    성공한 경우에만 작업을 완료 처리합니다. 기존 CLI 흐름은 SQLite 우선의
+    성공한 경우에만 작업을 완료 처리하며 SQLite는 보조 캐시로 사용합니다.
+    기존 CLI 흐름은 SQLite 우선의
     최선형 동작을 그대로 유지합니다.
     """
     clean_id = re.sub(r"v\d+$", "", paper_id.strip())
-    init_schema()
 
     # 정식 로그 코드 사용 (5100: PAPER_EXTRACTION_STARTED)
     logger.log(LogCode.PAPER_EXTRACTION_STARTED, paper_id=clean_id, status="extracting")
     start_time = time.time()
 
-    if not LIBRARY_DB.exists():
+    if not require_django_sync and not LIBRARY_DB.exists():
         err_msg = f"서재 DB를 찾을 수 없습니다: {LIBRARY_DB}"
         logger.log(LogCode.PAPER_EXTRACTION_FAILED, paper_id=clean_id, error=err_msg, error_type="FileNotFoundError")
         raise ValueError(err_msg)
 
-    with sqlite3.connect(LIBRARY_DB) as library:
-        paper = library.execute(
-            "SELECT id FROM papers "
-            "WHERE id = ? OR id GLOB ? "
-            "ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END "
-            "LIMIT 1",
-            (clean_id, f"{clean_id}v[0-9]*", clean_id),
-        ).fetchone()
-    if not paper:
+    if not require_django_sync:
+        with sqlite3.connect(LIBRARY_DB) as library:
+            paper = library.execute(
+                "SELECT id FROM papers "
+                "WHERE id = ? OR id GLOB ? "
+                "ORDER BY CASE WHEN id = ? THEN 0 ELSE 1 END "
+                "LIMIT 1",
+                (clean_id, f"{clean_id}v[0-9]*", clean_id),
+            ).fetchone()
+    if not require_django_sync and not paper:
         err_msg = f"paper_library.papers에 존재하지 않는 paper_id입니다: {clean_id}. 서재 선행 등록 필요"
         logger.log(LogCode.PAPER_EXTRACTION_FAILED, paper_id=clean_id, error=err_msg, error_type="MissingLibraryRecord")
         raise ValueError(err_msg)
 
     try:
-        # 1. HTML 본문 섹션 추출 및 SQLite 적재
+        # 웹 요청은 Django 저장소가 원본이며, 로컬 서재 등록을 요구하지 않습니다.
+        if require_django_sync:
+            from services.django_paper_repository import get_papers_by_ids
+
+            if not get_papers_by_ids([clean_id]):
+                raise ValueError(f"Django 서재에 존재하지 않는 paper_id입니다: {clean_id}")
+
         sections = ArxivExtractor().extract(clean_id)
-        with sqlite3.connect(EXTRACTED_DB) as extracted:
-            extracted.execute("DELETE FROM paper_sections WHERE paper_id = ?", (clean_id,))
-            extracted.executemany(
-                "INSERT INTO paper_sections "
-                "(paper_id, section_order, section_title, section_text, section_html) "
-                "VALUES (?, ?, ?, ?, ?)",
-                [(clean_id, order, title, text, fragment) for order, title, text, fragment in sections],
-            )
+        if require_django_sync and not sections:
+            raise ValueError(f"추출된 본문 섹션이 없습니다: {clean_id}")
+        if not require_django_sync:
+            _cache_sections(clean_id, sections)
 
         # 2. Django/MySQL PaperSection 테이블 동기화
         try:
@@ -283,12 +299,15 @@ def extract_and_save(paper_id: str, *, require_django_sync: bool = False) -> int
             if require_django_sync:
                 raise
 
-        # 3. SQLite 적재 완료 직후 Chroma 본문 벡터 스토어 즉시 색인 동기화
+        # 웹의 캐시/색인 실패는 이미 완료된 MySQL 저장을 실패 처리하지 않습니다.
+        # 캐시 갱신 실패 시 오래된 본문을 색인하지 않도록 같은 try에 둡니다.
         try:
+            if require_django_sync:
+                _cache_sections(clean_id, sections)
             from services.fulltext_vector_store import ChromaFullTextStore
             ChromaFullTextStore().ensure_index(paper_id=clean_id)
         except Exception as embed_err:
-            print(f"  [Notice] Chroma 벡터 색인 보조 작업 경고 ({clean_id}): {embed_err}")
+            print(f"  [Notice] 본문 캐시/벡터 색인 보조 작업 경고 ({clean_id}): {embed_err}")
 
         elapsed = round(time.time() - start_time, 2)
         # 정식 로그 코드 사용 (5200: PAPER_EXTRACTION_SUCCEEDED)
@@ -297,7 +316,7 @@ def extract_and_save(paper_id: str, *, require_django_sync: bool = False) -> int
             paper_id=clean_id,
             section_count=len(sections),
             duration_sec=elapsed,
-            db_path=str(EXTRACTED_DB)
+            db_path="Django PaperSection" if require_django_sync else str(EXTRACTED_DB)
         )
         return len(sections)
 
@@ -311,7 +330,7 @@ def extract_and_save(paper_id: str, *, require_django_sync: bool = False) -> int
             error_type=type(e).__name__,
             duration_sec=elapsed
         )
-        raise e
+        raise
 
 
 def export_markdown(paper_id: str, output_path: str | Path | None = None) -> Path:
