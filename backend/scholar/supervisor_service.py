@@ -48,13 +48,6 @@ _RELATED_PATTERN = re.compile(
     re.IGNORECASE,
 )
 _COUNT_PATTERN = re.compile(r"(\d+)\s*(?:개|편|papers?)", re.IGNORECASE)
-_ACTION_TEXT = re.compile(
-    r"(?:비슷한\s*(?:논문|것|걸)?\s*\d+\s*(?:개|편)?(?:도)?(?:\s*같이)?|"
-    r"논문|arxiv|검색|조회|찾아|찾기|해주고|해줘|해주세요|그리고|같이|"
-    r"내\s*서재(?:에도)?|서재(?:에도)?|저장|본문|추출|요약|번역|한국어로|"
-    r"시켜줘|돌려줘|까지|도)",
-    re.IGNORECASE,
-)
 _AMBIGUOUS_TOPICS = {"", "무슨", "어떤", "이", "그", "해당", "관련", "비슷한"}
 
 
@@ -67,9 +60,12 @@ class SupervisorPlanner:
     @property
     def llm(self):
         if self._llm is None:
-            from src.feature.search import OPENAI_CHAT_MODEL, create_safe_chat_model
-
-            self._llm = create_safe_chat_model(OPENAI_CHAT_MODEL, temperature=0.0)
+            import os
+            from langchain_openai import ChatOpenAI
+            self._llm = ChatOpenAI(
+                model=os.getenv("SUPERVISOR_MODEL") or os.getenv("FAST_KEYWORD_MODEL") or "gpt-4o-mini",
+                temperature=0, timeout=15, max_retries=1,
+            )
         return self._llm
 
     @staticmethod
@@ -81,18 +77,9 @@ class SupervisorPlanner:
         if related_count:
             result_count = related_count + 1
 
-        topic_match = re.match(r"\s*(.+?)\s*논문(?:을|를|이|가|과|와|은|는|\s)", message)
-        if topic_match:
-            query = topic_match.group(1).strip()
-        else:
-            cleaned = _ACTION_TEXT.sub(" ", message)
-            cleaned = re.sub(
-                r"\d+\s*(?:개|편|papers?)?",
-                " ",
-                cleaned,
-                flags=re.IGNORECASE,
-            )
-            query = re.sub(r"\s+", " ", cleaned).strip(" ,.!?를을은는이가")
+        from src.services.search_intent import extract_topic
+
+        query = extract_topic(message)
 
         summarize = "요약" in message or "summar" in message.casefold()
         translate = "번역" in message or "translat" in message.casefold()
@@ -118,7 +105,9 @@ class SupervisorPlanner:
         try:
             structured = self.llm.with_structured_output(SupervisorIntent)
             intent = structured.invoke(prompt)
-        except Exception:
+        except Exception as exc:
+            import logging
+            logging.getLogger(__name__).warning("Supervisor intent fallback (%s)", type(exc).__name__)
             intent = self._fallback_intent(message)
 
         related_match = _RELATED_PATTERN.search(message)
@@ -134,7 +123,8 @@ class SupervisorPlanner:
             raise ValueError("요청을 입력해 주세요.")
 
         intent = self._parse_intent(clean_message)
-        query = re.sub(r"\s+", " ", str(intent.query or "")).strip()
+        from src.services.search_intent import extract_topic
+        query = extract_topic(str(intent.query or ""))
         ambiguity_key = re.sub(
             r"\b(?:논문|paper|papers)\b",
             "",

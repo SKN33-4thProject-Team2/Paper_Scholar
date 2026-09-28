@@ -108,7 +108,7 @@ jobs:
                   frontend/*)
                     frontend=true
                     ;;
-                  backend/*|src/*|log/*|requirements.txt|Dockerfile|.dockerignore)
+                  backend/*|src/*|log/*|scripts/*|requirements.txt|Dockerfile|.dockerignore)
                     backend=true
                     ;;
                   .github/workflows/deploy.yml)
@@ -124,10 +124,19 @@ jobs:
           echo "frontend=$frontend" | tee -a "$GITHUB_OUTPUT"
           echo "backend=$backend" | tee -a "$GITHUB_OUTPUT"
 
+  verify:
+    name: 배포 전 회귀 검사
+    needs: detect-changes
+    if: needs.detect-changes.outputs.frontend == 'true' || needs.detect-changes.outputs.backend == 'true'
+    uses: ./.github/workflows/test.yml
+
   deploy-frontend:
     name: 프론트엔드 배포
-    needs: detect-changes
-    if: needs.detect-changes.outputs.frontend == 'true'
+    needs: [detect-changes, verify, deploy-backend]
+    if: >-
+      always() && needs.verify.result == 'success' &&
+      needs.detect-changes.outputs.frontend == 'true' &&
+      (needs.deploy-backend.result == 'success' || needs.deploy-backend.result == 'skipped')
     runs-on: ubuntu-latest
     steps:
       - name: 소스 체크아웃
@@ -138,7 +147,7 @@ jobs:
       - name: Node 설치
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
 
@@ -196,7 +205,7 @@ jobs:
 
   deploy-backend:
     name: 백엔드 배포
-    needs: detect-changes
+    needs: [detect-changes, verify]
     if: needs.detect-changes.outputs.backend == 'true'
     runs-on: ubuntu-latest
     steps:
@@ -222,19 +231,10 @@ jobs:
             echo "[2/5] 새 Docker 이미지 빌드 (기존 서비스 유지)..."
             sudo docker build -t lizcha01/paper-scholar:latest .
 
-            echo "[3/5] 백엔드 컨테이너 교체..."
-            sudo docker stop paper-scholar 2>/dev/null || true
-            sudo docker rm paper-scholar 2>/dev/null || true
-
             DB_PORT_VAL="${{ secrets.DB_PORT }}"
             DB_PORT_VAL="${DB_PORT_VAL:-33062}"
 
-            sudo docker run -d \
-              --name paper-scholar \
-              -p 8000:8000 \
-              --dns 8.8.8.8 \
-              --dns 8.8.4.4 \
-              --restart always \
+            sudo bash scripts/deploy_backend.sh lizcha01/paper-scholar:latest \
               -e DJANGO_SECRET_KEY="${{ secrets.DJANGO_SECRET_KEY }}" \
               -e DB_NAME="${{ secrets.DB_NAME }}" \
               -e DB_USER="${{ secrets.DB_USER }}" \
@@ -248,17 +248,8 @@ jobs:
               -e GEMINI_API_KEY="${{ secrets.GEMINI_API_KEY }}" \
               -e LANGSMITH_API_KEY="${{ secrets.LANGSMITH_API_KEY }}" \
               -e LANGSMITH_PROJECT="${{ secrets.LANGSMITH_PROJECT }}" \
-              -e LANGSMITH_TRACING="${{ secrets.LANGSMITH_TRACING }}" \
-              lizcha01/paper-scholar:latest
+              -e LANGSMITH_TRACING="${{ secrets.LANGSMITH_TRACING }}"
 
-            echo "[4/5] DB 마이그레이션 적용..."
-            sleep 3
-            sudo docker exec paper-scholar python manage.py migrate --noinput || true
-
-            echo "[5/5] 7일 이상 된 댕글링 이미지 정리..."
-            sudo docker image prune -f --filter "until=168h"
-
-            echo "=== 백엔드 배포 완료 ==="
 
   deployment-summary:
     name: 배포 결과 요약

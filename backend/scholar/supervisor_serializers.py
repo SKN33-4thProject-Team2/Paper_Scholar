@@ -19,3 +19,16 @@ class SupervisorPlanRequestSerializer(serializers.Serializer):
         max_length=2000,
         trim_whitespace=True,
     )
+
+
+class SupervisorRunRequestSerializer(SupervisorCommandSerializer):
+    thread_id = serializers.UUIDField(required=False)
+
+
+class SupervisorRunSerializer(serializers.ModelSerializer):
+    class Meta:
+        from .models import SupervisorRun
+        model = SupervisorRun
+        fields = ('id', 'thread_id', 'query', 'status', 'response', 'node_history',
+                  'papers', 'sources', 'error_message', 'created_at', 'completed_at')
+        read_only_fields = fields

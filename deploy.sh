@@ -13,23 +13,8 @@ echo "[2/4] Docker 캐시를 활용한 증분 빌드..."
 # Dockerfile의 레이어 분리 구조를 활용해 변경된 소스 코드만 5~10초 내에 빌드
 docker build -t "$IMAGE_NAME" .
 
-echo "[3/4] 백엔드 컨테이너 초고속 교체..."
-docker stop "$CONTAINER_NAME" 2>/dev/null || true
-docker rm "$CONTAINER_NAME" 2>/dev/null || true
-
-# 외부 MySQL(IPTime) 및 호스트 네트워크와 안전하게 통신하도록 구동
-docker run -d \
-  --name "$CONTAINER_NAME" \
-  --restart unless-stopped \
-  -p 8000:8000 \
-  --dns 8.8.8.8 --dns 8.8.4.4 \
-  "$IMAGE_NAME"
-
-echo "[4/5] 데이터베이스 마이그레이션 및 찌꺼기 이미지 정리..."
-docker exec "$CONTAINER_NAME" python manage.py migrate --noinput
-# 조건 없는 prune은 직전 빌드의 중간 레이어까지 지워 다음 배포에서
-# torch/requirements를 처음부터 다시 받게 만든다. 오래된 것만 정리한다.
-docker image prune -f --filter "until=168h"
+echo "[3/4] DB 검증 및 백엔드 교체..."
+bash scripts/deploy_backend.sh "$IMAGE_NAME" --env-file .env
 
 echo "[5/5] 프론트엔드 빌드 및 배치..."
 # nginx가 /var/www/paper-scholar 를 서빙하도록 설정돼 있어야 반영된다.

@@ -11,7 +11,6 @@ https://docs.djangoproject.com/en/5.2/ref/settings/
 """
 
 import os
-import random
 import sys
 from datetime import timedelta
 from pathlib import Path
@@ -40,32 +39,25 @@ load_dotenv(BASE_DIR / ".env")
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/5.2/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-# 수정: 환경 변수가 없을 경우 안전한 폴백 키 자동 생성 (배포 에러 방지)
-SECRET_KEY = os.environ.get(
-    "DJANGO_SECRET_KEY",
-    "django-insecure-fallback-key-" + "".join(random.choices("abcdefghijklmnopqrstuvwxyz0123456789", k=20))
-)
+DEBUG = os.getenv("DEBUG", "false").lower() in {"true", "1", "yes"}
+SECRET_KEY = os.getenv("DJANGO_SECRET_KEY", "").strip()
+if not SECRET_KEY:
+    if DEBUG:
+        SECRET_KEY = "django-insecure-local-development-only-do-not-deploy"
+    else:
+        from django.core.exceptions import ImproperlyConfigured
+        raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set in production.")
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get("DEBUG", "True") == "True"
-
-# 모든 호스트 접속 허용 (배포 및 테스트 단계 권장)
-ALLOWED_HOSTS = [
-    '52.79.195.18',
-    'localhost',
-    '127.0.0.1',
-    'skn33.iptime.org',
-    '.skn33-project.store',
-    'skn33-project.store',
-    '*',
-]
-
-CSRF_TRUSTED_ORIGINS = [
-    'http://skn33-project.store:8000',
-    'http://*.skn33-project.store:8000',
-    'http://52.79.195.18:8000',
-]
+ALLOWED_HOSTS = [host.strip() for host in os.getenv(
+    "DJANGO_ALLOWED_HOSTS", "localhost,127.0.0.1,skn33-project.store"
+).split(",") if host.strip()]
+CSRF_TRUSTED_ORIGINS = [origin.strip() for origin in os.getenv(
+    "CSRF_TRUSTED_ORIGINS", "https://skn33-project.store"
+).split(",") if origin.strip()]
+# Production port is bound to loopback; only the trusted Nginx proxy reaches it.
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+SESSION_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_SECURE = not DEBUG
 
 
 # Application definition

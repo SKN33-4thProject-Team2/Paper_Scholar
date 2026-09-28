@@ -2,6 +2,11 @@
 
 arXiv와 PDF 학술 논문을 수집·파싱·인덱싱하여 논문 검색, 번역, 요약 및 근거 기반 심층 질의응답을 제공하는 RAG(Retrieval-Augmented Generation) 챗봇 서비스입니다. 3차 프로젝트의 CLI·Streamlit·로컬 LangGraph 엔진을 그대로 재사용하면서, React 웹 프론트엔드와 Django REST API·MySQL 기반의 로그인 다중 사용자 웹 서비스로 확장했습니다.
 
+현재 Django/React 웹의 검색·Supervisor 실행 및 배포 절차는
+[검색·Supervisor 수정 안내](docs/SEARCH_SUPERVISOR_FIX.md)를 참고하세요.
+로컬 웹 실행 시 `python manage.py migrate` 적용 후 웹 서버와 별도로
+`python manage.py run_jobs` 실행기가 필요합니다.
+
 ## 목차
 
 - [팀원 및 역할](#팀원-및-역할)

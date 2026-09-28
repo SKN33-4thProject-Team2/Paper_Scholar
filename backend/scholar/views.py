@@ -1,3 +1,5 @@
+from django.db import transaction
+from src.services.search_intent import SearchIntentError
 from django.db.models import Count, Exists, OuterRef, Q
 from django.shortcuts import get_object_or_404
 from django.utils import timezone
@@ -50,6 +52,7 @@ class CurrentUserAPIView(APIView):
         return Response(UserSerializer(request.user).data)
 
 
+@transaction.atomic
 def save_papers_and_create_jobs(
     papers: list[dict],
     *,
@@ -77,7 +80,7 @@ def save_papers_and_create_jobs(
 
     saved_papers = []
     for paper_data in papers:
-        paper = Paper.objects.get(
+        paper = Paper.objects.select_for_update().get(
             arxiv_id=normalize_arxiv_id(paper_data["arxiv_id"])
         )
         LibraryEntry.objects.get_or_create(user=user, paper=paper)
@@ -130,12 +133,16 @@ def save_papers_and_create_jobs(
 
 def run_arxiv_search(query: str, max_results: int, sort_by: str) -> list[dict]:
     """기존 ArxivSearchBot의 제목 검색 기능을 HTTP 계층에서 호출합니다."""
-    from src.feature.search import ArxivSearchBot
+    from src.services.search_intent import search_keywords
+    return search_with_keywords(search_keywords(query), max_results, sort_by)
 
-    clean_query = query.strip().replace('"', "")
+
+def search_with_keywords(keywords, max_results, sort_by):
+    from src.feature.search import ArxivSearchBot
+    from src.services.search_intent import build_search_query
     bot = ArxivSearchBot()
     papers = bot.search_papers(
-        final_query=f'ti:"{clean_query}"',
+        final_query=build_search_query(keywords),
         sort_by=sort_by,
         max_results=max_results,
     )
@@ -166,6 +173,21 @@ def health_check(_request):
     )
 
 
+@api_view(["GET"])
+@permission_classes([AllowAny])
+def readiness_check(_request):
+    from django.db import connection
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+        # Check the queue schema, not only network connectivity.
+        from .models import SupervisorRun
+        SupervisorRun.objects.only("context", "heartbeat_at").first()
+    except Exception:
+        return Response({"status": "unavailable"}, status=503)
+    return Response({"status": "ok"})
+
+
 class ArxivSearchAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
@@ -180,6 +202,8 @@ class ArxivSearchAPIView(APIView):
                 max_results=params["max_results"],
                 sort_by=params["sort_by"],
             )
+        except SearchIntentError as exc:
+            return Response({"detail": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as exc:
             return Response(
                 {"detail": f"arXiv 검색 중 오류가 발생했습니다: {exc}"},
@@ -297,9 +321,10 @@ class PaperExtractAPIView(APIView):
 
     permission_classes = [IsAuthenticated]
 
+    @transaction.atomic
     def post(self, request, *args, **kwargs):
         paper = get_object_or_404(
-            Paper,
+            Paper.objects.select_for_update(),
             arxiv_id=self.kwargs["arxiv_id"],
             library_entries__user=request.user,
         )
@@ -366,12 +391,13 @@ class PaperSummaryAPIView(RetrieveAPIView):
 class PaperSummarizeAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @transaction.atomic
     def post(self, request, arxiv_id: str):
         request_serializer = PaperSummarizeRequestSerializer(data=request.data)
         request_serializer.is_valid(raise_exception=True)
         force = request_serializer.validated_data["force"]
         paper = get_object_or_404(
-            Paper,
+            Paper.objects.select_for_update(),
             arxiv_id=arxiv_id,
             library_entries__user=request.user,
         )
@@ -468,12 +494,13 @@ class PaperTranslationsAPIView(ListAPIView):
 class PaperTranslateAPIView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @transaction.atomic
     def post(self, request, arxiv_id: str):
         request_serializer = PaperTranslateRequestSerializer(data=request.data)
         request_serializer.is_valid(raise_exception=True)
         params = request_serializer.validated_data
         paper = get_object_or_404(
-            Paper,
+            Paper.objects.select_for_update(),
             arxiv_id=arxiv_id,
             library_entries__user=request.user,
         )

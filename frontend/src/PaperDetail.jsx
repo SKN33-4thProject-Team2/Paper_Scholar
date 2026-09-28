@@ -1,3 +1,4 @@
+import { startJobPolling } from './jobPolling'
 import { useEffect, useState } from 'react'
 import {
   extractPaper,
@@ -237,33 +238,18 @@ export default function PaperDetail({ paper, loading, onPaperUpdated }) {
       return undefined
     }
 
-    let cancelled = false
-    const pollSummaryJob = async () => {
-      try {
-        const job = await getProcessingJob(summaryJobId)
-        if (cancelled) return
-        setSummaryJob(job)
-        if (job.status === 'completed') {
-          const summary = await getPaperSummary(paper.arxiv_id)
-          if (cancelled) return
-          setArtifacts((current) => ({
-            ...(current.paperId === paper.arxiv_id ? current : EMPTY_ARTIFACTS),
-            paperId: paper.arxiv_id,
-            summary,
-          }))
-          await onPaperUpdated?.(paper.arxiv_id)
-        }
-      } catch (requestError) {
-        if (!cancelled) setArtifactError(requestError.message)
-      }
-    }
-
-    const timer = window.setInterval(pollSummaryJob, 2000)
-    pollSummaryJob()
-    return () => {
-      cancelled = true
-      window.clearInterval(timer)
-    }
+    return startJobPolling({
+      fetchJob: () => getProcessingJob(summaryJobId),
+      fetchArtifact: () => getPaperSummary(paper.arxiv_id),
+      onArtifact: (value) => setArtifacts((current) => ({
+        ...(current.paperId === paper.arxiv_id ? current : EMPTY_ARTIFACTS),
+        paperId: paper.arxiv_id,
+        summary: value,
+      })),
+      onJob: setSummaryJob,
+      onComplete: () => onPaperUpdated?.(paper.arxiv_id),
+      onError: (error) => setArtifactError(error.message),
+    })
   }, [paper?.arxiv_id, summaryJobId, summaryJobStatus, onPaperUpdated])
 
   useEffect(() => {
@@ -274,33 +260,18 @@ export default function PaperDetail({ paper, loading, onPaperUpdated }) {
       return undefined
     }
 
-    let cancelled = false
-    const pollTranslationJob = async () => {
-      try {
-        const job = await getProcessingJob(translationJobId)
-        if (cancelled) return
-        setTranslationJob(job)
-        if (job.status === 'completed') {
-          const translations = await getPaperTranslations(paper.arxiv_id)
-          if (cancelled) return
-          setArtifacts((current) => ({
-            ...(current.paperId === paper.arxiv_id ? current : EMPTY_ARTIFACTS),
-            paperId: paper.arxiv_id,
-            translations,
-          }))
-          await onPaperUpdated?.(paper.arxiv_id)
-        }
-      } catch (requestError) {
-        if (!cancelled) setArtifactError(requestError.message)
-      }
-    }
-
-    const timer = window.setInterval(pollTranslationJob, 2000)
-    pollTranslationJob()
-    return () => {
-      cancelled = true
-      window.clearInterval(timer)
-    }
+    return startJobPolling({
+      fetchJob: () => getProcessingJob(translationJobId),
+      fetchArtifact: () => getPaperTranslations(paper.arxiv_id),
+      onArtifact: (value) => setArtifacts((current) => ({
+        ...(current.paperId === paper.arxiv_id ? current : EMPTY_ARTIFACTS),
+        paperId: paper.arxiv_id,
+        translations: value,
+      })),
+      onJob: setTranslationJob,
+      onComplete: () => onPaperUpdated?.(paper.arxiv_id),
+      onError: (error) => setArtifactError(error.message),
+    })
   }, [paper?.arxiv_id, translationJobId, translationJobStatus, onPaperUpdated])
 
   useEffect(() => {
@@ -311,33 +282,18 @@ export default function PaperDetail({ paper, loading, onPaperUpdated }) {
       return undefined
     }
 
-    let cancelled = false
-    const pollExtractionJob = async () => {
-      try {
-        const job = await getProcessingJob(extractionJobId)
-        if (cancelled) return
-        setExtractionJob(job)
-        if (job.status === 'completed') {
-          const sections = await getPaperSections(paper.arxiv_id)
-          if (cancelled) return
-          setArtifacts((current) => ({
-            ...(current.paperId === paper.arxiv_id ? current : EMPTY_ARTIFACTS),
-            paperId: paper.arxiv_id,
-            sections,
-          }))
-          await onPaperUpdated?.(paper.arxiv_id)
-        }
-      } catch (requestError) {
-        if (!cancelled) setArtifactError(requestError.message)
-      }
-    }
-
-    const timer = window.setInterval(pollExtractionJob, 2000)
-    pollExtractionJob()
-    return () => {
-      cancelled = true
-      window.clearInterval(timer)
-    }
+    return startJobPolling({
+      fetchJob: () => getProcessingJob(extractionJobId),
+      fetchArtifact: () => getPaperSections(paper.arxiv_id),
+      onArtifact: (value) => setArtifacts((current) => ({
+        ...(current.paperId === paper.arxiv_id ? current : EMPTY_ARTIFACTS),
+        paperId: paper.arxiv_id,
+        sections: value,
+      })),
+      onJob: setExtractionJob,
+      onComplete: () => onPaperUpdated?.(paper.arxiv_id),
+      onError: (error) => setArtifactError(error.message),
+    })
   }, [paper?.arxiv_id, extractionJobId, extractionJobStatus, onPaperUpdated])
 
   const selectTab = async (tabId) => {

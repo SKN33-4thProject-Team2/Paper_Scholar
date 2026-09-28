@@ -52,4 +52,4 @@ WORKDIR /app/backend
 EXPOSE 8000
 
 # 11. Django 웹 서버 실행 (0.0.0.0 바인딩)
-CMD ["python", "manage.py", "runserver", "0.0.0.0:8000"]
+CMD ["bash", "/app/scripts/start_backend.sh"]
