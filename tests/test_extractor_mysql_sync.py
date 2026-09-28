@@ -110,6 +110,7 @@ class ExtractorMySQLSyncTest(unittest.TestCase):
 
     def test_required_django_sync_reports_mysql_failure(self):
         repository = types.ModuleType("services.django_paper_repository")
+        repository.get_papers_by_ids = lambda ids: [{"id": ids[0]}]
 
         def replace_paper_sections(paper_id, sections):
             raise RuntimeError("MySQL unavailable")
@@ -129,11 +130,7 @@ class ExtractorMySQLSyncTest(unittest.TestCase):
                     require_django_sync=True,
                 )
 
-        with sqlite3.connect(self.extracted_db) as connection:
-            stored_count = connection.execute(
-                "SELECT COUNT(*) FROM paper_sections"
-            ).fetchone()[0]
-        self.assertEqual(stored_count, 2)
+        self.assertFalse(self.extracted_db.exists())
 
     def test_extraction_accepts_versioned_legacy_library_record(self):
         calls = []
